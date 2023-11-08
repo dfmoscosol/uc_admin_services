@@ -1,0 +1,8 @@
+# Archivos generados por IDEs
+.idea/
+
+# Directorios de entorno virtual
+venv/
+
+# Archivos de configuración local
+config.json
