@@ -3,6 +3,3 @@
 
 # Directorios de entorno virtual
 venv/
-
-# Archivos de configuración local
-config.json
