@@ -1,5 +1,14 @@
 from app import app, db, jwt
-from app.models import Capacitacion, Usuario, Taller
+from app.models import (
+    Capacitacion,
+    Usuario,
+    Taller,
+    TermsCompetenciaPedagogica,
+    TermsCompetenciaComunicativa,
+    TermsCompetenciaTecnologica,
+    TermsCompetenciaInvestigativa,
+    TermsCompetenciaGestion,
+)
 from flask import request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager
 from flask_bcrypt import generate_password_hash, check_password_hash
@@ -9,6 +18,13 @@ from flask_bcrypt import generate_password_hash, check_password_hash
 def invalid_token_callback(error):
     return jsonify({"estado": False, "respuesta": "", "error": "Token inválido"}), 401
 
+@app.route("/", methods=["GET"])
+def hello():
+    return {
+        "estado": True,
+        "respuesta": "Bienvenido al servidor del sistema administrativo de la direccion de innovacion educativa",
+        "error": "",
+    }, 201
 
 @app.route("/registro", methods=["POST"])
 def register():
@@ -75,17 +91,12 @@ def crear_capacitacion():
         nombre_tutor = datos_capacitacion.get("nombre_tutor")
         allow_inscripcion = datos_capacitacion.get("allow_inscripcion")
         allow_asistencia = datos_capacitacion.get("allow_asistencia")
+        presencial = datos_capacitacion.get("presencial")
+        direccion = datos_capacitacion.get("direccion")
+        cupo = datos_capacitacion.get("cupo")
         talleres = datos_capacitacion.get("talleres", [])
 
         # Verificar la presencia de atributos obligatorios
-        print(not nombre)
-        print(not horas)
-        print(not horas)
-        print(not tipo)
-        print(allow_inscripcion is None)
-        print(allow_asistencia is None)
-        print(not fechas)
-        print(not nombre_tutor)
         if (
             not nombre
             or not horas
@@ -94,6 +105,7 @@ def crear_capacitacion():
             or allow_asistencia is None
             or not fechas
             or not nombre_tutor
+            or not cupo
         ):
             return (
                 jsonify(
@@ -140,6 +152,9 @@ def crear_capacitacion():
             nombre_tutor=nombre_tutor,
             allow_inscripcion=allow_inscripcion,
             allow_asistencia=allow_asistencia,
+            presencial=presencial,
+            direccion=direccion,
+            cupo=cupo,
         )
 
         db.session.add(nueva_capacitacion)
@@ -199,11 +214,18 @@ def get_capacitaciones():
     try:
         # Obtener todas las capacitaciones de la base de datos
         capacitaciones = Capacitacion.query.all()
+
+        # Ordenar las capacitaciones por la primera fecha en el array de fechas
+        capacitaciones_ordenadas = sorted(
+            capacitaciones,
+            key=lambda capacitacion: capacitacion.fechas[0] if capacitacion.fechas else None
+        )
+
         # Lista para almacenar la información a devolver
         lista_capacitaciones = []
 
-        # Iterar sobre las capacitaciones
-        for capacitacion in capacitaciones:
+        # Iterar sobre las capacitaciones ordenadas
+        for capacitacion in capacitaciones_ordenadas:
             # Obtener los talleres si la capacitación es de tipo "Jornada"
             talleres = []
             if capacitacion.tipo == "Jornada":
@@ -228,6 +250,11 @@ def get_capacitaciones():
                 "tipo": capacitacion.tipo,
                 "fechas": fechas_formateadas,
                 "nombre_tutor": capacitacion.nombre_tutor,
+                "allow_inscripcion": capacitacion.allow_inscripcion,
+                "allow_asistencia": capacitacion.allow_asistencia,
+                "presencial": capacitacion.presencial,
+                "direccion": capacitacion.direccion,
+                "cupo": capacitacion.cupo,
             }
 
             # Agregar el atributo "talleres" solo si la capacitación es de tipo "Jornada"
@@ -257,6 +284,78 @@ def get_capacitaciones():
                     "estado": False,
                     "respuesta": "",
                     "error": f"Error al obtener capacitaciones: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/capacitacion/<int:capacitacion_id>", methods=["GET"])
+@jwt_required()
+def obtener_capacitacion(capacitacion_id):
+    try:
+        # Obtener la capacitación por ID
+        capacitacion = Capacitacion.query.get(capacitacion_id)
+
+        # Verificar si la capacitación existe
+        if not capacitacion:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "No se encontró la capacitación especificada",
+                    }
+                ),
+                404,
+            )
+
+        # Obtener todos los datos de la capacitación
+        datos_capacitacion = {
+            "id_capacitacion": capacitacion.id_capacitacion,
+            "nombre": capacitacion.nombre,
+            "horas": capacitacion.horas,
+            "tipo": capacitacion.tipo,
+            "fechas": capacitacion.fechas,
+            "nombre_tutor": capacitacion.nombre_tutor,
+            "allow_inscripcion": capacitacion.allow_inscripcion,
+            "allow_asistencia": capacitacion.allow_asistencia,
+            "presencial": capacitacion.presencial,
+            "direccion": capacitacion.direccion,
+            "cupo": capacitacion.cupo,
+        }
+
+        # Si es de tipo Jornada, obtener los talleres asociados
+        if capacitacion.tipo == "Jornada":
+            talleres = Taller.query.filter_by(
+                id_capacitacion=capacitacion.id_capacitacion
+            ).all()
+            datos_talleres = [
+                {"nombre": taller.nombre, "id_taller": taller.id_taller}
+                for taller in talleres
+            ]
+            datos_capacitacion["talleres"] = datos_talleres
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"capacitacion": datos_capacitacion},
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener capacitación: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener capacitación {str(e)}",
                 }
             ),
             500,
@@ -295,6 +394,9 @@ def actualizar_capacitacion(id_capacitacion):
             "allow_inscripcion",
             "allow_asistencia",
             "talleres",
+            "presencial",
+            "direccion",
+            "cupo",
         ]
         atributos_invalidos = [
             atributo
@@ -346,6 +448,7 @@ def actualizar_capacitacion(id_capacitacion):
         capacitacion.nombre = datos_actualizacion.get("nombre", capacitacion.nombre)
         capacitacion.horas = datos_actualizacion.get("horas", capacitacion.horas)
         capacitacion.fechas = datos_actualizacion.get("fechas", capacitacion.fechas)
+        capacitacion.cupo = datos_actualizacion.get("cupo", capacitacion.cupo)
         capacitacion.nombre_tutor = datos_actualizacion.get(
             "nombre_tutor", capacitacion.nombre_tutor
         )
@@ -354,6 +457,12 @@ def actualizar_capacitacion(id_capacitacion):
         )
         capacitacion.allow_asistencia = datos_actualizacion.get(
             "allow_asistencia", capacitacion.allow_asistencia
+        )
+        capacitacion.presencial = datos_actualizacion.get(
+            "presencial", capacitacion.presencial
+        )
+        capacitacion.direccion = datos_actualizacion.get(
+            "direccion", capacitacion.direccion
         )
 
         # Actualizar la base de datos
@@ -632,6 +741,223 @@ def eliminar_taller(taller_id):
                     "estado": False,
                     "respuesta": "",
                     "error": f"Error al eliminar taller {str(e)}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/terminos/<competencia>", methods=["GET"])
+@jwt_required()
+def obtener_terminos(competencia):
+    try:
+        # Determinar la tabla correspondiente según el nombre de la competencia
+        tabla_terminos = None
+        if competencia.lower() == "pedagogica":
+            tabla_terminos = TermsCompetenciaPedagogica
+        elif competencia.lower() == "comunicativa":
+            tabla_terminos = TermsCompetenciaComunicativa
+        elif competencia.lower() == "tecnologica":
+            tabla_terminos = TermsCompetenciaTecnologica
+        elif competencia.lower() == "investigativa":
+            tabla_terminos = TermsCompetenciaInvestigativa
+        elif competencia.lower() == "gestion":
+            tabla_terminos = TermsCompetenciaGestion
+        else:
+            return (
+                jsonify(
+                    {"estado": False, "respuesta": "", "error": "Competencia no válida"}
+                ),
+                400,
+            )
+
+        # Obtener todos los registros de la tabla correspondiente
+        terminos = tabla_terminos.query.all()
+
+        # Construir la respuesta
+        datos_terminos = [
+            {
+                "id": termino.id,
+                "palabra": termino.palabra,
+                "isvalid": termino.isvalid,
+                "isapproved": termino.isapproved,
+            }
+            for termino in terminos
+        ]
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"terminos": datos_terminos},
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener términos: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener términos: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/actualizar_termino/<competencia>/<int:termino_id>", methods=["PUT"])
+@jwt_required()
+def actualizar_isapproved(competencia, termino_id):
+    try:
+        # Determinar la tabla correspondiente según el nombre de la competencia
+        tabla_terminos = None
+        if competencia.lower() == "pedagogica":
+            tabla_terminos = TermsCompetenciaPedagogica
+        elif competencia.lower() == "comunicativa":
+            tabla_terminos = TermsCompetenciaComunicativa
+        elif competencia.lower() == "tecnologica":
+            tabla_terminos = TermsCompetenciaTecnologica
+        elif competencia.lower() == "investigativa":
+            tabla_terminos = TermsCompetenciaInvestigativa
+        elif competencia.lower() == "gestion":
+            tabla_terminos = TermsCompetenciaGestion
+        else:
+            return (
+                jsonify(
+                    {"estado": False, "respuesta": "", "error": "Competencia no válida"}
+                ),
+                400,
+            )
+
+        # Obtener el término específico por ID
+        termino = tabla_terminos.query.get(termino_id)
+
+        # Verificar si el término existe
+        if not termino:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "No se encontró el término especificado",
+                    }
+                ),
+                404,
+            )
+
+        # Actualizar la columna isapproved
+        nuevo_estado = request.json.get("isapproved")
+        if nuevo_estado is not None:
+            termino.isapproved = nuevo_estado
+            db.session.commit()
+
+            return (
+                jsonify(
+                    {
+                        "estado": True,
+                        "respuesta": "Estado del término actualizado exitosamente",
+                        "error": "",
+                    }
+                ),
+                200,
+            )
+        else:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El parámetro 'isapproved' es requerido",
+                    }
+                ),
+                400,
+            )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al actualizar isapproved: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al actualizar el estado del termino: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/eliminar_termino/<competencia>/<int:termino_id>", methods=["DELETE"])
+@jwt_required()
+def eliminar_termino(competencia, termino_id):
+    try:
+        # Determinar la tabla correspondiente según el nombre de la competencia
+        tabla_terminos = None
+        if competencia.lower() == "pedagogica":
+            tabla_terminos = TermsCompetenciaPedagogica
+        elif competencia.lower() == "comunicativa":
+            tabla_terminos = TermsCompetenciaComunicativa
+        elif competencia.lower() == "tecnologica":
+            tabla_terminos = TermsCompetenciaTecnologica
+        elif competencia.lower() == "investigativa":
+            tabla_terminos = TermsCompetenciaInvestigativa
+        elif competencia.lower() == "gestion":
+            tabla_terminos = TermsCompetenciaGestion
+        else:
+            return (
+                jsonify(
+                    {"estado": False, "respuesta": "", "error": "Competencia no válida"}
+                ),
+                400,
+            )
+
+        # Obtener el término específico por ID
+        termino = tabla_terminos.query.get(termino_id)
+
+        # Verificar si el término existe
+        if not termino:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "No se encontró el término especificado",
+                    }
+                ),
+                404,
+            )
+
+        # Eliminar el término de la base de datos
+        db.session.delete(termino)
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Término eliminado exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al eliminar término: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al eliminar término: {str(e)}",
                 }
             ),
             500,

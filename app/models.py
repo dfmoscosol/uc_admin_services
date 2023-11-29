@@ -18,6 +18,9 @@ class Capacitacion(db.Model):
     nombre_tutor = db.Column(db.String(255))
     allow_inscripcion = db.Column(db.Boolean)
     allow_asistencia = db.Column(db.Boolean)
+    cupo = db.Column(db.Integer)
+    presencial = db.Column(db.Boolean, nullable=True)
+    direccion = db.Column(db.String(255), nullable=True)
     talleres = db.relationship('Taller', backref='capacitacion', cascade='all, delete-orphan', lazy=True)
     inscripciones = db.relationship('Inscripcion', backref='capacitacion',cascade='all, delete-orphan', lazy=True)
 
@@ -38,6 +41,36 @@ class Acreditacion(db.Model):
     id_acreditacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
     id_capacitacion = db.Column(db.Integer, db.ForeignKey('capacitacion.id_capacitacion'))
     id_docente = db.Column(db.String(255), db.ForeignKey('docente.uid_firebase'))
+
+class TermsCompetenciaPedagogica(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    palabra = db.Column(db.String(255))
+    isvalid = db.Column(db.Boolean)
+    isapproved = db.Column(db.Boolean)
+
+class TermsCompetenciaComunicativa(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    palabra = db.Column(db.String(255))
+    isvalid = db.Column(db.Boolean)
+    isapproved = db.Column(db.Boolean)
+
+class TermsCompetenciaTecnologica(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    palabra = db.Column(db.String(255))
+    isvalid = db.Column(db.Boolean)
+    isapproved = db.Column(db.Boolean)
+
+class TermsCompetenciaInvestigativa(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    palabra = db.Column(db.String(255))
+    isvalid = db.Column(db.Boolean)
+    isapproved = db.Column(db.Boolean)
+
+class TermsCompetenciaGestion(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    palabra = db.Column(db.String(255))
+    isvalid = db.Column(db.Boolean)
+    isapproved = db.Column(db.Boolean)
 
 class Usuario(db.Model):
     id_usuario = db.Column(db.Integer, primary_key=True)
