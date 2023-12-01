@@ -7,7 +7,6 @@ class Docente(db.Model):
     nombre = db.Column(db.String(255))
     correo = db.Column(db.String(255))
     inscripciones = db.relationship('Inscripcion', backref='docente', lazy=True)
-    acreditaciones = db.relationship('Acreditacion', backref='docente', lazy=True)
 
 class Capacitacion(db.Model):
     id_capacitacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -17,7 +16,8 @@ class Capacitacion(db.Model):
     fechas = db.Column(db.ARRAY(db.Date))
     nombre_tutor = db.Column(db.String(255))
     allow_inscripcion = db.Column(db.Boolean)
-    allow_asistencia = db.Column(db.Boolean)
+    allow_asistencia_entrada = db.Column(db.Boolean)
+    allow_asistencia_salida = db.Column(db.Boolean)
     cupo = db.Column(db.Integer)
     presencial = db.Column(db.Boolean, nullable=True)
     direccion = db.Column(db.String(255), nullable=True)
@@ -29,18 +29,27 @@ class Taller(db.Model):
     nombre = db.Column(db.String(255))
     id_capacitacion = db.Column(db.Integer, db.ForeignKey('capacitacion.id_capacitacion'))
 
+class Acreditacion(db.Model):
+    id_acreditacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    asistencia = db.Column(db.Boolean)
+    aprobado = db.Column(db.Boolean)
+    id_inscripcion = db.Column(db.Integer, db.ForeignKey('inscripcion.id_inscripcion'), unique=True)
+
+class Asistencia(db.Model):
+    id_asistencia = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    asiste_entrada = db.Column(db.Boolean)
+    asiste_salida = db.Column(db.Boolean)
+    fecha = db.Column(db.Date)
+    id_inscripcion = db.Column(db.Integer, db.ForeignKey('inscripcion.id_inscripcion'))
+
 class Inscripcion(db.Model):
     id_inscripcion = db.Column(db.Integer, primary_key=True, autoincrement=True)
     id_capacitacion = db.Column(db.Integer, db.ForeignKey('capacitacion.id_capacitacion'))
     id_docente = db.Column(db.String(255), db.ForeignKey('docente.uid_firebase'))
     id_taller = db.Column(db.Integer, db.ForeignKey('taller.id_taller'))
-    asiste_entrada = db.Column(db.Boolean)
-    asiste_salida = db.Column(db.Boolean)
-
-class Acreditacion(db.Model):
-    id_acreditacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    id_capacitacion = db.Column(db.Integer, db.ForeignKey('capacitacion.id_capacitacion'))
-    id_docente = db.Column(db.String(255), db.ForeignKey('docente.uid_firebase'))
+    isAccepted = db.Column(db.Boolean)
+    asistencias = db.relationship('Asistencia', backref='inscripcion', lazy=True)
+    acreditacion = db.relationship('Acreditacion', backref='inscripcion', uselist=False, lazy=True)
 
 class TermsCompetenciaPedagogica(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)

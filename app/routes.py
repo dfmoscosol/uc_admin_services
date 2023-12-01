@@ -18,6 +18,7 @@ from flask_bcrypt import generate_password_hash, check_password_hash
 def invalid_token_callback(error):
     return jsonify({"estado": False, "respuesta": "", "error": "Token inválido"}), 401
 
+
 @app.route("/", methods=["GET"])
 def hello():
     return {
@@ -25,6 +26,7 @@ def hello():
         "respuesta": "Bienvenido al servidor del sistema administrativo de la direccion de innovacion educativa",
         "error": "",
     }, 201
+
 
 @app.route("/registro", methods=["POST"])
 def register():
@@ -79,7 +81,7 @@ def login():
 
 
 @app.route("/crear_capacitacion", methods=["POST"])
-@jwt_required()
+# @jwt_required()
 def crear_capacitacion():
     try:
         # Obtener datos del JSON de la solicitud
@@ -90,7 +92,8 @@ def crear_capacitacion():
         fechas = datos_capacitacion.get("fechas", [])
         nombre_tutor = datos_capacitacion.get("nombre_tutor")
         allow_inscripcion = datos_capacitacion.get("allow_inscripcion")
-        allow_asistencia = datos_capacitacion.get("allow_asistencia")
+        allow_asistencia_entrada = datos_capacitacion.get("allow_asistencia_entrada")
+        allow_asistencia_salida = datos_capacitacion.get("allow_asistencia_salida")
         presencial = datos_capacitacion.get("presencial")
         direccion = datos_capacitacion.get("direccion")
         cupo = datos_capacitacion.get("cupo")
@@ -102,7 +105,8 @@ def crear_capacitacion():
             or not horas
             or not tipo
             or allow_inscripcion is None
-            or allow_asistencia is None
+            or allow_asistencia_entrada is None
+            or allow_asistencia_salida is None
             or not fechas
             or not nombre_tutor
             or not cupo
@@ -151,7 +155,8 @@ def crear_capacitacion():
             fechas=fechas,
             nombre_tutor=nombre_tutor,
             allow_inscripcion=allow_inscripcion,
-            allow_asistencia=allow_asistencia,
+            allow_asistencia_entrada=allow_asistencia_entrada,
+            allow_asistencia_salida=allow_asistencia_salida,
             presencial=presencial,
             direccion=direccion,
             cupo=cupo,
@@ -209,16 +214,17 @@ def crear_capacitacion():
 
 
 @app.route("/capacitaciones", methods=["GET"])
-@jwt_required()
+# @jwt_required()
 def get_capacitaciones():
     try:
         # Obtener todas las capacitaciones de la base de datos
         capacitaciones = Capacitacion.query.all()
 
-        # Ordenar las capacitaciones por la primera fecha en el array de fechas
+        # Ordenar las capacitaciones
         capacitaciones_ordenadas = sorted(
             capacitaciones,
-            key=lambda capacitacion: capacitacion.fechas[0] if capacitacion.fechas else None
+            key=lambda capacitacion: capacitacion.id_capacitacion,
+            reverse=True,
         )
 
         # Lista para almacenar la información a devolver
@@ -251,7 +257,8 @@ def get_capacitaciones():
                 "fechas": fechas_formateadas,
                 "nombre_tutor": capacitacion.nombre_tutor,
                 "allow_inscripcion": capacitacion.allow_inscripcion,
-                "allow_asistencia": capacitacion.allow_asistencia,
+                "allow_asistencia_entrada": capacitacion.allow_asistencia_entrada,
+                "allow_asistencia_salida": capacitacion.allow_asistencia_salida,
                 "presencial": capacitacion.presencial,
                 "direccion": capacitacion.direccion,
                 "cupo": capacitacion.cupo,
@@ -291,7 +298,7 @@ def get_capacitaciones():
 
 
 @app.route("/capacitacion/<int:capacitacion_id>", methods=["GET"])
-@jwt_required()
+# @jwt_required()
 def obtener_capacitacion(capacitacion_id):
     try:
         # Obtener la capacitación por ID
@@ -310,16 +317,21 @@ def obtener_capacitacion(capacitacion_id):
                 404,
             )
 
+        fechas_formateadas = [
+            fecha.strftime("%d-%m-%Y") for fecha in capacitacion.fechas
+        ]
+
         # Obtener todos los datos de la capacitación
         datos_capacitacion = {
             "id_capacitacion": capacitacion.id_capacitacion,
             "nombre": capacitacion.nombre,
             "horas": capacitacion.horas,
             "tipo": capacitacion.tipo,
-            "fechas": capacitacion.fechas,
+            "fechas": fechas_formateadas,
             "nombre_tutor": capacitacion.nombre_tutor,
             "allow_inscripcion": capacitacion.allow_inscripcion,
-            "allow_asistencia": capacitacion.allow_asistencia,
+            "allow_asistencia_entrada": capacitacion.allow_asistencia_entrada,
+            "allow_asistencia_salida": capacitacion.allow_asistencia_salida,
             "presencial": capacitacion.presencial,
             "direccion": capacitacion.direccion,
             "cupo": capacitacion.cupo,
@@ -363,7 +375,7 @@ def obtener_capacitacion(capacitacion_id):
 
 
 @app.route("/actualizar_capacitacion/<int:id_capacitacion>", methods=["PUT"])
-@jwt_required()
+# @jwt_required()
 def actualizar_capacitacion(id_capacitacion):
     try:
         # Obtener la capacitación existente
@@ -392,7 +404,8 @@ def actualizar_capacitacion(id_capacitacion):
             "fechas",
             "nombre_tutor",
             "allow_inscripcion",
-            "allow_asistencia",
+            "allow_asistencia_entrada",
+            "allow_asistencia_salida",
             "talleres",
             "presencial",
             "direccion",
@@ -455,8 +468,11 @@ def actualizar_capacitacion(id_capacitacion):
         capacitacion.allow_inscripcion = datos_actualizacion.get(
             "allow_inscripcion", capacitacion.allow_inscripcion
         )
-        capacitacion.allow_asistencia = datos_actualizacion.get(
-            "allow_asistencia", capacitacion.allow_asistencia
+        capacitacion.allow_asistencia_entrada = datos_actualizacion.get(
+            "allow_asistencia_entrada", capacitacion.allow_asistencia_entrada
+        )
+        capacitacion.allow_asistencia_salida = datos_actualizacion.get(
+            "allow_asistencia_salida", capacitacion.allow_asistencia_salida
         )
         capacitacion.presencial = datos_actualizacion.get(
             "presencial", capacitacion.presencial
@@ -495,7 +511,7 @@ def actualizar_capacitacion(id_capacitacion):
 
 
 @app.route("/eliminar_capacitacion/<int:id_capacitacion>", methods=["DELETE"])
-@jwt_required()
+# @jwt_required()
 def eliminar_capacitacion(id_capacitacion):
     try:
         # Obtener la capacitación existente
@@ -544,7 +560,7 @@ def eliminar_capacitacion(id_capacitacion):
 
 
 @app.route("/crear_taller", methods=["POST"])
-@jwt_required()
+# @jwt_required()
 def crear_taller():
     try:
         # Obtener datos del JSON de la solicitud
@@ -612,7 +628,7 @@ def crear_taller():
 
 
 @app.route("/actualizar_taller/<int:taller_id>", methods=["PUT"])
-@jwt_required()
+# @jwt_required()
 def actualizar_taller(taller_id):
     try:
         # Obtener datos del JSON de la solicitud
@@ -698,7 +714,7 @@ def actualizar_taller(taller_id):
 
 
 @app.route("/eliminar_taller/<int:taller_id>", methods=["DELETE"])
-@jwt_required()
+# @jwt_required()
 def eliminar_taller(taller_id):
     try:
         # Obtener el taller a eliminar
@@ -748,7 +764,7 @@ def eliminar_taller(taller_id):
 
 
 @app.route("/terminos/<competencia>", methods=["GET"])
-@jwt_required()
+# @jwt_required()
 def obtener_terminos(competencia):
     try:
         # Determinar la tabla correspondiente según el nombre de la competencia
@@ -812,7 +828,7 @@ def obtener_terminos(competencia):
 
 
 @app.route("/actualizar_termino/<competencia>/<int:termino_id>", methods=["PUT"])
-@jwt_required()
+# @jwt_required()
 def actualizar_isapproved(competencia, termino_id):
     try:
         # Determinar la tabla correspondiente según el nombre de la competencia
@@ -895,7 +911,7 @@ def actualizar_isapproved(competencia, termino_id):
 
 
 @app.route("/eliminar_termino/<competencia>/<int:termino_id>", methods=["DELETE"])
-@jwt_required()
+# @jwt_required()
 def eliminar_termino(competencia, termino_id):
     try:
         # Determinar la tabla correspondiente según el nombre de la competencia
