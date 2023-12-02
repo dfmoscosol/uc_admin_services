@@ -1,4 +1,5 @@
 from app import app, db, jwt
+import os
 from app.models import (
     Capacitacion,
     Usuario,
@@ -8,11 +9,25 @@ from app.models import (
     TermsCompetenciaTecnologica,
     TermsCompetenciaInvestigativa,
     TermsCompetenciaGestion,
+    Acreditacion,
+    Asistencia,
+    Carrera,
+    Certificados,
+    Cursos,
+    Docente,
+    Encuesta,
+    Facultad,
+    Inscripcion,
+    Periodo,
+    Pregunta,
+    Puntuacion,
+    Resultado,
+    Universidad,
 )
 from flask import request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager
 from flask_bcrypt import generate_password_hash, check_password_hash
-
+from flask import send_file
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
@@ -978,3 +993,98 @@ def eliminar_termino(competencia, termino_id):
             ),
             500,
         )
+
+
+@app.route("/certificados", methods=["GET"])
+#@jwt_required()
+def obtener_certificados():
+    try:
+        # Realizar la consulta uniendo las tablas Certificado y Curso
+        certificados = (
+            db.session.query(Certificados, Cursos)
+            .join(Cursos, Certificados.id_curso == Cursos.id_curso)
+            .all()
+        )
+
+        # Construir la respuesta
+        datos_certificados = [
+            {
+                "id_certificado": certificado.id_certificado,
+                "user_id": certificado.user_id,
+                "file_name": certificado.file_name,
+                "path_to_file": certificado.path_to_file,
+                "fecha_creacion": certificado.fecha_creacion,
+                "isapproved": certificado.isapproved,
+                "nombre_curso": curso.titulo,
+                "url_curso": curso.url,
+                "url_imagen": curso.urlimagen,
+                "url_logo": curso.urllogo,
+            }
+            for certificado, curso in certificados
+        ]
+
+        return (
+            jsonify({"estado": True, "respuesta": {"certificados":datos_certificados}, "error": ""}),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener certificados: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener certificados: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/descargar_certificado/<int:id_certificado>", methods=["GET"])
+#@jwt_required()
+def descargar_certificado(id_certificado):
+    try:
+        certificado = Certificados.query.get(id_certificado)
+
+        if certificado:
+            path_to_file = certificado.path_to_file
+            print(path_to_file)
+            if os.path.exists(path_to_file):
+                return send_file(path_to_file, as_attachment=True)
+            else:
+                return jsonify({"estado": False, "respuesta": "", "error": "Archivo no encontrado"}), 404
+        else:    
+            return jsonify({"estado": False, "respuesta": "", "error": "Certificado no encontrado"}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error al descargar el certificado: {str(e)}")
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al descargar el certificado: {str(e)}"}), 500
+    
+@app.route("/actualizar_certificado/<int:id_certificado>", methods=["PUT"])
+#@jwt_required()
+def actualizar_certificado(id_certificado):
+    try:
+        # Obtener el nuevo valor para isapproved desde el cuerpo de la solicitud
+        datos = request.get_json()
+        nuevo_isapproved = datos.get('isapproved')
+
+        # Validar que se proporcionó el nuevo valor de isapproved
+        if nuevo_isapproved is None:
+            return jsonify({"estado": False, "respuesta": "", "error": "El valor 'isapproved' no está presente"}), 400
+
+        # Buscar el certificado por su ID
+        certificado = Certificados.query.get(id_certificado)
+        if not certificado:
+            return jsonify({"estado": False, "respuesta": "", "error": "Certificado no encontrado"}), 404
+
+        # Actualizar el campo isapproved
+        certificado.isapproved = nuevo_isapproved
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Certificado actualizado con éxito", "error": ""}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al actualizar el certificado: {str(e)}")
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar el certificado: {str(e)}"}), 500
