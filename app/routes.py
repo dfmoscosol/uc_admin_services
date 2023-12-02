@@ -471,8 +471,25 @@ def actualizar_capacitacion(id_capacitacion):
                 ),
                 400,
             )
+        if 'fechas' in datos_actualizacion:
+            nuevas_fechas = datos_actualizacion['fechas']
 
-        # Actualizar otros atributos según sea necesario
+            # Eliminar registros de asistencia antiguos
+            inscripciones = Inscripcion.query.filter_by(id_capacitacion=id_capacitacion).all()
+            for inscripcion in inscripciones:
+                Asistencia.query.filter_by(id_inscripcion=inscripcion.id_inscripcion).delete()
+
+            # Crear nuevos registros de asistencia
+            for inscripcion in inscripciones:
+                for fecha in nuevas_fechas:
+                    nueva_asistencia = Asistencia(
+                        asiste_entrada=False, 
+                        asiste_salida=False, 
+                        fecha=fecha, 
+                        id_inscripcion=inscripcion.id_inscripcion
+                    )
+                    db.session.add(nueva_asistencia)
+
         capacitacion.nombre = datos_actualizacion.get("nombre", capacitacion.nombre)
         capacitacion.horas = datos_actualizacion.get("horas", capacitacion.horas)
         capacitacion.fechas = datos_actualizacion.get("fechas", capacitacion.fechas)
@@ -1065,6 +1082,7 @@ def descargar_certificado(id_certificado):
 @app.route("/actualizar_certificado/<int:id_certificado>", methods=["PUT"])
 #@jwt_required()
 def actualizar_certificado(id_certificado):
+
     try:
         # Obtener el nuevo valor para isapproved desde el cuerpo de la solicitud
         datos = request.get_json()
@@ -1088,3 +1106,46 @@ def actualizar_certificado(id_certificado):
     except Exception as e:
         app.logger.error(f"Error al actualizar el certificado: {str(e)}")
         return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar el certificado: {str(e)}"}), 500
+    
+@app.route("/actualizar_inscripcion/<int:id_inscripcion>", methods=["PUT"])
+#@jwt_required()
+def actualizar_inscripcion(id_inscripcion):
+    try:
+        # Obtener el nuevo valor para isaccepted desde el cuerpo de la solicitud
+        datos = request.get_json()
+        nuevo_isaccepted = datos.get('isaccepted')
+
+        # Validar que se proporcionó el nuevo valor de isaccepted
+        if nuevo_isaccepted is None:
+            return jsonify({"estado": False, "respuesta": "", "error": "El valor 'isaccepted' no está presente"}), 400
+
+        # Buscar la inscripción por su ID
+        inscripcion = Inscripcion.query.get(id_inscripcion)
+        if not inscripcion:
+            return jsonify({"estado": False, "respuesta": "", "error": "Inscripción no encontrada"}), 404
+
+        # Actualizar el campo isaccepted
+        inscripcion.isaccepted = nuevo_isaccepted
+        db.session.commit()
+
+        # Manejar los registros en Asistencia dependiendo del valor de isaccepted
+        if nuevo_isaccepted:
+            # Crear registros en Asistencia
+            capacitacion = Capacitacion.query.get(inscripcion.id_capacitacion)
+            for fecha in capacitacion.fechas:
+                nueva_asistencia = Asistencia(asiste_entrada=False, asiste_salida=False, fecha=fecha, id_inscripcion=id_inscripcion)
+                db.session.add(nueva_asistencia)
+        else:
+            # Eliminar registros en Asistencia
+            Asistencia.query.filter_by(id_inscripcion=id_inscripcion).delete()
+
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Inscripción actualizada con éxito", "error": ""}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al actualizar la inscripción: {str(e)}")
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar la inscripción: {str(e)}"}), 500
+
+
+
