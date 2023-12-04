@@ -137,7 +137,7 @@ def crear_capacitacion():
                 400,
             )
 
-        if tipo == "Jornada":
+        if tipo == "jornada":
             if not talleres:
                 return (
                     jsonify(
@@ -180,8 +180,8 @@ def crear_capacitacion():
         db.session.add(nueva_capacitacion)
         db.session.commit()
 
-        # Si es de tipo Jornada, verificar y crear registros en la tabla Taller
-        if tipo == "Jornada" and talleres:
+        # Si es de tipo jornada, verificar y crear registros en la tabla Taller
+        if tipo == "jornada" and talleres:
             for taller_data in talleres:
                 taller_nombre = taller_data.get("nombre")
                 if not taller_nombre:
@@ -247,9 +247,9 @@ def get_capacitaciones():
 
         # Iterar sobre las capacitaciones ordenadas
         for capacitacion in capacitaciones_ordenadas:
-            # Obtener los talleres si la capacitación es de tipo "Jornada"
+            # Obtener los talleres si la capacitación es de tipo "jornada"
             talleres = []
-            if capacitacion.tipo == "Jornada":
+            if capacitacion.tipo == "jornada":
                 talleres_db = Taller.query.filter_by(
                     id_capacitacion=capacitacion.id_capacitacion
                 ).all()
@@ -279,8 +279,8 @@ def get_capacitaciones():
                 "cupo": capacitacion.cupo,
             }
 
-            # Agregar el atributo "talleres" solo si la capacitación es de tipo "Jornada"
-            if capacitacion.tipo == "Jornada":
+            # Agregar el atributo "talleres" solo si la capacitación es de tipo "jornada"
+            if capacitacion.tipo == "jornada":
                 capacitacion_dict["talleres"] = talleres
 
             # Agregar la capacitación a la lista
@@ -352,8 +352,8 @@ def obtener_capacitacion(capacitacion_id):
             "cupo": capacitacion.cupo,
         }
 
-        # Si es de tipo Jornada, obtener los talleres asociados
-        if capacitacion.tipo == "Jornada":
+        # Si es de tipo jornada, obtener los talleres asociados
+        if capacitacion.tipo == "jornada":
             talleres = Taller.query.filter_by(
                 id_capacitacion=capacitacion.id_capacitacion
             ).all()
@@ -460,7 +460,7 @@ def actualizar_capacitacion(id_capacitacion):
                 400,
             )
 
-        if tipo == "Jornada" and talleres:
+        if tipo == "jornada" and talleres:
             return (
                 jsonify(
                     {
@@ -613,15 +613,15 @@ def crear_taller():
                 400,
             )
 
-        # Verificar si la capacitación es de tipo Jornada
+        # Verificar si la capacitación es de tipo jornada
         capacitacion = Capacitacion.query.get(id_capacitacion)
-        if not capacitacion or capacitacion.tipo != "Jornada":
+        if not capacitacion or capacitacion.tipo != "jornada":
             return (
                 jsonify(
                     {
                         "estado": False,
                         "respuesta": "",
-                        "error": "Solo se pueden agregar talleres a capacitaciones de tipo Jornada",
+                        "error": "Solo se pueden agregar talleres a capacitaciones de tipo jornada",
                     }
                 ),
                 400,
