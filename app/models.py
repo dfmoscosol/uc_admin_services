@@ -4,7 +4,7 @@ from flask_bcrypt import check_password_hash,generate_password_hash
 class Docente(db.Model):
     uid_firebase = db.Column(db.String(255), primary_key=True)
     id_universidad_fk = db.Column(db.Integer, db.ForeignKey('universidad.id_universidad'))  # Clave foránea correcta
-    nombre = db.Column(db.String(255))
+    nombres = db.Column(db.String(255))
     correo = db.Column(db.String(255))
     inscripciones = db.relationship('Inscripcion', backref='docente', lazy=True)
     universidad = db.relationship('Universidad', back_populates='docentes')  # Relación bidireccional

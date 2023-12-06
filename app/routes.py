@@ -29,6 +29,7 @@ from flask_jwt_extended import create_access_token, jwt_required, JWTManager
 from flask_bcrypt import generate_password_hash, check_password_hash
 from flask import send_file
 
+
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
     return jsonify({"estado": False, "respuesta": "", "error": "Token inválido"}), 401
@@ -234,36 +235,44 @@ def get_capacitaciones():
     try:
         # Obtener todas las capacitaciones de la base de datos
         capacitaciones = Capacitacion.query.all()
-
-        # Ordenar las capacitaciones
         capacitaciones_ordenadas = sorted(
             capacitaciones,
             key=lambda capacitacion: capacitacion.id_capacitacion,
             reverse=True,
         )
 
-        # Lista para almacenar la información a devolver
         lista_capacitaciones = []
 
-        # Iterar sobre las capacitaciones ordenadas
         for capacitacion in capacitaciones_ordenadas:
-            # Obtener los talleres si la capacitación es de tipo "jornada"
             talleres = []
+            numero_inscritos = 0
+
             if capacitacion.tipo == "jornada":
                 talleres_db = Taller.query.filter_by(
                     id_capacitacion=capacitacion.id_capacitacion
                 ).all()
-                talleres = [
-                    {"id_taller": taller.id_taller, "nombre": taller.nombre}
-                    for taller in talleres_db
-                ]
+                for taller in talleres_db:
+                    # Contar las inscripciones aceptadas para cada taller
+                    numero_inscritos_taller = Inscripcion.query.filter_by(
+                        id_taller=taller.id_taller, isaccepted=True
+                    ).count()
+                    talleres.append(
+                        {
+                            "id_taller": taller.id_taller,
+                            "nombre": taller.nombre,
+                            "numero_inscritos": numero_inscritos_taller,
+                        }
+                    )
+            else:
+                # Contar las inscripciones aceptadas para la capacitación
+                numero_inscritos = Inscripcion.query.filter_by(
+                    id_capacitacion=capacitacion.id_capacitacion, isaccepted=True
+                ).count()
 
-            # Formatear las fechas en 'dd/mm/aaaa'
             fechas_formateadas = [
                 fecha.strftime("%d-%m-%Y") for fecha in capacitacion.fechas
             ]
 
-            # Construir el diccionario de capacitación
             capacitacion_dict = {
                 "id_capacitacion": capacitacion.id_capacitacion,
                 "nombre": capacitacion.nombre,
@@ -277,13 +286,12 @@ def get_capacitaciones():
                 "presencial": capacitacion.presencial,
                 "direccion": capacitacion.direccion,
                 "cupo": capacitacion.cupo,
+                "numero_inscritos": numero_inscritos,
             }
 
-            # Agregar el atributo "talleres" solo si la capacitación es de tipo "jornada"
             if capacitacion.tipo == "jornada":
                 capacitacion_dict["talleres"] = talleres
 
-            # Agregar la capacitación a la lista
             lista_capacitaciones.append(capacitacion_dict)
 
         return (
@@ -316,10 +324,8 @@ def get_capacitaciones():
 # @jwt_required()
 def obtener_capacitacion(capacitacion_id):
     try:
-        # Obtener la capacitación por ID
         capacitacion = Capacitacion.query.get(capacitacion_id)
 
-        # Verificar si la capacitación existe
         if not capacitacion:
             return (
                 jsonify(
@@ -336,7 +342,27 @@ def obtener_capacitacion(capacitacion_id):
             fecha.strftime("%d-%m-%Y") for fecha in capacitacion.fechas
         ]
 
-        # Obtener todos los datos de la capacitación
+        # Obtener inscripciones y detalles de docentes para la capacitación
+        inscripciones = (
+            db.session.query(Inscripcion, Docente)
+            .join(Docente, Inscripcion.id_docente == Docente.uid_firebase)
+            .filter(Inscripcion.id_capacitacion == capacitacion.id_capacitacion)
+            .all()
+        )
+
+        docentes_inscritos = []
+        docentes_pendientes = []
+        for inscripcion, docente in inscripciones:
+            docente_info = {
+                "docente_id": inscripcion.id_docente,
+                "correo": docente.correo,
+                "nombres": docente.nombres,
+            }
+            if inscripcion.isaccepted:
+                docentes_inscritos.append(docente_info)
+            else:
+                docentes_pendientes.append(docente_info)
+
         datos_capacitacion = {
             "id_capacitacion": capacitacion.id_capacitacion,
             "nombre": capacitacion.nombre,
@@ -352,16 +378,41 @@ def obtener_capacitacion(capacitacion_id):
             "cupo": capacitacion.cupo,
         }
 
-        # Si es de tipo jornada, obtener los talleres asociados
         if capacitacion.tipo == "jornada":
             talleres = Taller.query.filter_by(
                 id_capacitacion=capacitacion.id_capacitacion
             ).all()
-            datos_talleres = [
-                {"nombre": taller.nombre, "id_taller": taller.id_taller}
-                for taller in talleres
-            ]
+            datos_talleres = []
+            for taller in talleres:
+                inscripciones_taller = (
+                    db.session.query(Inscripcion, Docente)
+                    .join(Docente, Inscripcion.id_docente == Docente.uid_firebase)
+                    .filter(Inscripcion.id_taller == taller.id_taller)
+                    .all()
+                )
+                docentes_taller_inscritos = []
+                docentes_taller_pendientes = []
+                for inscripcion, docente in inscripciones_taller:
+                    docente_info = {
+                        "docente_id": inscripcion.id_docente,
+                        "correo": docente.correo,
+                        "nombres": docente.nombres,
+                    }
+                    if inscripcion.isaccepted:
+                        docentes_taller_inscritos.append(docente_info)
+                    else:
+                        docentes_taller_pendientes.append(docente_info)
+
+                datos_talleres.append({
+                    "nombre": taller.nombre,
+                    "id_taller": taller.id_taller,
+                    "docentes_inscritos": docentes_taller_inscritos,
+                    "docentes_pendientes": docentes_taller_pendientes,
+                })
             datos_capacitacion["talleres"] = datos_talleres
+        else:
+            datos_capacitacion["docentes_inscritos"]= docentes_inscritos
+            datos_capacitacion["docentes_pendientes"]= docentes_pendientes
 
         return (
             jsonify(
@@ -375,7 +426,6 @@ def obtener_capacitacion(capacitacion_id):
         )
 
     except Exception as e:
-        # Capturar errores y devolver un mensaje de error
         app.logger.error(f"Error al obtener capacitación: {str(e)}")
         return (
             jsonify(
@@ -471,22 +521,26 @@ def actualizar_capacitacion(id_capacitacion):
                 ),
                 400,
             )
-        if 'fechas' in datos_actualizacion:
-            nuevas_fechas = datos_actualizacion['fechas']
+        if "fechas" in datos_actualizacion:
+            nuevas_fechas = datos_actualizacion["fechas"]
 
             # Eliminar registros de asistencia antiguos
-            inscripciones = Inscripcion.query.filter_by(id_capacitacion=id_capacitacion).all()
+            inscripciones = Inscripcion.query.filter_by(
+                id_capacitacion=id_capacitacion
+            ).all()
             for inscripcion in inscripciones:
-                Asistencia.query.filter_by(id_inscripcion=inscripcion.id_inscripcion).delete()
+                Asistencia.query.filter_by(
+                    id_inscripcion=inscripcion.id_inscripcion
+                ).delete()
 
             # Crear nuevos registros de asistencia
             for inscripcion in inscripciones:
                 for fecha in nuevas_fechas:
                     nueva_asistencia = Asistencia(
-                        asiste_entrada=False, 
-                        asiste_salida=False, 
-                        fecha=fecha, 
-                        id_inscripcion=inscripcion.id_inscripcion
+                        asiste_entrada=False,
+                        asiste_salida=False,
+                        fecha=fecha,
+                        id_inscripcion=inscripcion.id_inscripcion,
                     )
                     db.session.add(nueva_asistencia)
 
@@ -1013,7 +1067,7 @@ def eliminar_termino(competencia, termino_id):
 
 
 @app.route("/certificados", methods=["GET"])
-#@jwt_required()
+# @jwt_required()
 def obtener_certificados():
     try:
         # Realizar la consulta uniendo las tablas Certificado y Curso
@@ -1041,7 +1095,13 @@ def obtener_certificados():
         ]
 
         return (
-            jsonify({"estado": True, "respuesta": {"certificados":datos_certificados}, "error": ""}),
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"certificados": datos_certificados},
+                    "error": "",
+                }
+            ),
             200,
         )
 
@@ -1059,8 +1119,9 @@ def obtener_certificados():
             500,
         )
 
+
 @app.route("/descargar_certificado/<int:id_certificado>", methods=["GET"])
-#@jwt_required()
+# @jwt_required()
 def descargar_certificado(id_certificado):
     try:
         certificado = Certificados.query.get(id_certificado)
@@ -1071,58 +1132,140 @@ def descargar_certificado(id_certificado):
             if os.path.exists(path_to_file):
                 return send_file(path_to_file, as_attachment=True)
             else:
-                return jsonify({"estado": False, "respuesta": "", "error": "Archivo no encontrado"}), 404
-        else:    
-            return jsonify({"estado": False, "respuesta": "", "error": "Certificado no encontrado"}), 404
+                return (
+                    jsonify(
+                        {
+                            "estado": False,
+                            "respuesta": "",
+                            "error": "Archivo no encontrado",
+                        }
+                    ),
+                    404,
+                )
+        else:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Certificado no encontrado",
+                    }
+                ),
+                404,
+            )
 
     except Exception as e:
         app.logger.error(f"Error al descargar el certificado: {str(e)}")
-        return jsonify({"estado": False, "respuesta": "", "error": f"Error al descargar el certificado: {str(e)}"}), 500
-    
-@app.route("/actualizar_certificado/<int:id_certificado>", methods=["PUT"])
-#@jwt_required()
-def actualizar_certificado(id_certificado):
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al descargar el certificado: {str(e)}",
+                }
+            ),
+            500,
+        )
 
+
+@app.route("/actualizar_certificado/<int:id_certificado>", methods=["PUT"])
+# @jwt_required()
+def actualizar_certificado(id_certificado):
     try:
         # Obtener el nuevo valor para isapproved desde el cuerpo de la solicitud
         datos = request.get_json()
-        nuevo_isapproved = datos.get('isapproved')
+        nuevo_isapproved = datos.get("isapproved")
 
         # Validar que se proporcionó el nuevo valor de isapproved
         if nuevo_isapproved is None:
-            return jsonify({"estado": False, "respuesta": "", "error": "El valor 'isapproved' no está presente"}), 400
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El valor 'isapproved' no está presente",
+                    }
+                ),
+                400,
+            )
 
         # Buscar el certificado por su ID
         certificado = Certificados.query.get(id_certificado)
         if not certificado:
-            return jsonify({"estado": False, "respuesta": "", "error": "Certificado no encontrado"}), 404
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Certificado no encontrado",
+                    }
+                ),
+                404,
+            )
 
         # Actualizar el campo isapproved
         certificado.isapproved = nuevo_isapproved
         db.session.commit()
 
-        return jsonify({"estado": True, "respuesta": "Certificado actualizado con éxito", "error": ""}), 200
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Certificado actualizado con éxito",
+                    "error": "",
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         app.logger.error(f"Error al actualizar el certificado: {str(e)}")
-        return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar el certificado: {str(e)}"}), 500
-    
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al actualizar el certificado: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+
 @app.route("/actualizar_inscripcion/<int:id_inscripcion>", methods=["PUT"])
-#@jwt_required()
+# @jwt_required()
 def actualizar_inscripcion(id_inscripcion):
     try:
         # Obtener el nuevo valor para isaccepted desde el cuerpo de la solicitud
         datos = request.get_json()
-        nuevo_isaccepted = datos.get('isaccepted')
+        nuevo_isaccepted = datos.get("isaccepted")
 
         # Validar que se proporcionó el nuevo valor de isaccepted
         if nuevo_isaccepted is None:
-            return jsonify({"estado": False, "respuesta": "", "error": "El valor 'isaccepted' no está presente"}), 400
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El valor 'isaccepted' no está presente",
+                    }
+                ),
+                400,
+            )
 
         # Buscar la inscripción por su ID
         inscripcion = Inscripcion.query.get(id_inscripcion)
         if not inscripcion:
-            return jsonify({"estado": False, "respuesta": "", "error": "Inscripción no encontrada"}), 404
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Inscripción no encontrada",
+                    }
+                ),
+                404,
+            )
 
         # Actualizar el campo isaccepted
         inscripcion.isaccepted = nuevo_isaccepted
@@ -1133,7 +1276,12 @@ def actualizar_inscripcion(id_inscripcion):
             # Crear registros en Asistencia
             capacitacion = Capacitacion.query.get(inscripcion.id_capacitacion)
             for fecha in capacitacion.fechas:
-                nueva_asistencia = Asistencia(asiste_entrada=False, asiste_salida=False, fecha=fecha, id_inscripcion=id_inscripcion)
+                nueva_asistencia = Asistencia(
+                    asiste_entrada=False,
+                    asiste_salida=False,
+                    fecha=fecha,
+                    id_inscripcion=id_inscripcion,
+                )
                 db.session.add(nueva_asistencia)
         else:
             # Eliminar registros en Asistencia
@@ -1141,11 +1289,98 @@ def actualizar_inscripcion(id_inscripcion):
 
         db.session.commit()
 
-        return jsonify({"estado": True, "respuesta": "Inscripción actualizada con éxito", "error": ""}), 200
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Inscripción actualizada con éxito",
+                    "error": "",
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         app.logger.error(f"Error al actualizar la inscripción: {str(e)}")
-        return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar la inscripción: {str(e)}"}), 500
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al actualizar la inscripción: {str(e)}",
+                }
+            ),
+            500,
+        )
 
 
+@app.route("/docentes_disponibles/<int:id_capacitacion>", methods=["GET"])
+def docentes_disponibles(id_capacitacion):
+    try:
+        # Obtener todos los docentes
+        todos_los_docentes = Docente.query.all()
 
+        # Obtener los ID de los docentes que tienen inscripción en la capacitación
+        docentes_inscritos_en_capacitacion = {inscripcion.id_docente for inscripcion in Inscripcion.query.filter_by(id_capacitacion=id_capacitacion)}
+
+        # Filtrar los docentes que no están inscritos en la capacitación
+        docentes_disponibles = [docente for docente in todos_los_docentes if docente.uid_firebase not in docentes_inscritos_en_capacitacion]
+        
+        # Convertir a formato JSON
+        docentes_json = [{"id": docente.uid_firebase, "nombre": docente.nombres, "correo": docente.correo} for docente in docentes_disponibles]
+
+        return jsonify({"estado": True, "respuesta": docentes_json, "error": ""}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener docentes disponibles: {str(e)}")
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al obtener docentes disponibles: {str(e)}"}), 500
+
+@app.route("/agregar_inscripciones", methods=["POST"])
+def agregar_inscripciones():
+    try:
+        datos = request.get_json()
+        id_capacitacion = datos.get('id_capacitacion')
+        ids_docentes = datos.get('ids_docentes')  # Un array de IDs de docentes
+        id_taller = datos.get('id_taller')
+
+        if not id_capacitacion or not ids_docentes:
+            return jsonify({"estado": False, "respuesta": "", "error": "La capacitación y los docentes son campos obligatorios"}), 400
+
+        # Obtener la capacitación
+        capacitacion = Capacitacion.query.get(id_capacitacion)
+        if not capacitacion:
+            return jsonify({"estado": False, "respuesta": "", "error": "Capacitación no encontrada"}), 404
+
+        # Validación para capacitaciones de tipo jornada
+        if not id_taller and capacitacion.tipo == "jornada":
+            return jsonify({"estado": False, "respuesta": "", "error": "Se requiere un taller para inscripciones en capacitaciones de tipo jornada"}), 400
+
+        if id_taller:
+            taller = Taller.query.filter_by(id_taller=id_taller, id_capacitacion=id_capacitacion).first()
+            if not taller:
+                return jsonify({"estado": False, "respuesta": "", "error": "El taller proporcionado no pertenece a la capacitación indicada"}), 400
+
+
+        for id_docente in ids_docentes:
+            # Verificar si ya existe una inscripción
+            inscripcion_existente = Inscripcion.query.filter_by(id_capacitacion=id_capacitacion, id_docente=id_docente).first()
+            if inscripcion_existente:
+                continue  # Saltar este docente si ya está inscrito
+
+            nueva_inscripcion = Inscripcion(id_capacitacion=id_capacitacion, id_taller=id_taller if id_taller else None, id_docente=id_docente, isaccepted=True)
+            db.session.add(nueva_inscripcion)
+            db.session.commit()  # Hacer commit después de cada inscripción
+
+            capacitacion = Capacitacion.query.get(id_capacitacion)
+            if capacitacion:
+                for fecha in capacitacion.fechas:
+                    nueva_asistencia = Asistencia(asiste_entrada=False, asiste_salida=False, fecha=fecha, id_inscripcion=nueva_inscripcion.id_inscripcion)
+                    db.session.add(nueva_asistencia)
+                db.session.commit()  # Hacer commit después de agregar asistencias
+
+        return jsonify({"estado": True, "respuesta": "Inscripciones y asistencias agregadas exitosamente", "error": ""}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al agregar inscripciones: {str(e)}")
+        db.session.rollback()  # Hacer rollback en caso de error
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al agregar inscripciones: {str(e)}"}), 500
