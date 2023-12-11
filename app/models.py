@@ -35,6 +35,7 @@ class Acreditacion(db.Model):
     id_acreditacion = db.Column(db.Integer, primary_key=True, autoincrement=True)
     asistencia = db.Column(db.Boolean)
     aprobado = db.Column(db.Boolean)
+    observacion = db.Column(db.String)
     id_inscripcion = db.Column(db.Integer, db.ForeignKey('inscripcion.id_inscripcion'), unique=True)
 
 class Asistencia(db.Model):

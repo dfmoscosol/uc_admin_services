@@ -1273,6 +1273,8 @@ def actualizar_inscripcion(id_inscripcion):
 
         # Manejar los registros en Asistencia dependiendo del valor de isaccepted
         if nuevo_isaccepted:
+            nueva_acreditacion = Acreditacion(id_inscripcion=id_inscripcion,asistencia=False,aprobado=False,observacion="")
+            db.session.add(nueva_acreditacion)
             # Crear registros en Asistencia
             capacitacion = Capacitacion.query.get(inscripcion.id_capacitacion)
             for fecha in capacitacion.fechas:
@@ -1366,13 +1368,14 @@ def agregar_inscripciones():
             inscripcion_existente = Inscripcion.query.filter_by(id_capacitacion=id_capacitacion, id_docente=id_docente).first()
             if inscripcion_existente:
                 continue  # Saltar este docente si ya está inscrito
-
             nueva_inscripcion = Inscripcion(id_capacitacion=id_capacitacion, id_taller=id_taller if id_taller else None, id_docente=id_docente, isaccepted=True)
             db.session.add(nueva_inscripcion)
             db.session.commit()  # Hacer commit después de cada inscripción
 
             capacitacion = Capacitacion.query.get(id_capacitacion)
             if capacitacion:
+                nueva_acreditacion = Acreditacion(id_inscripcion=nueva_inscripcion.id_inscripcion,asistencia=False,aprobado=False,observacion="")
+                db.session.add(nueva_acreditacion)
                 for fecha in capacitacion.fechas:
                     nueva_asistencia = Asistencia(asiste_entrada=False, asiste_salida=False, fecha=fecha, id_inscripcion=nueva_inscripcion.id_inscripcion)
                     db.session.add(nueva_asistencia)
