@@ -357,6 +357,7 @@ def obtener_capacitacion(capacitacion_id):
                 "docente_id": inscripcion.id_docente,
                 "correo": docente.correo,
                 "nombres": docente.nombres,
+                "id_inscripcion": inscripcion.id_inscripcion,
             }
             if inscripcion.isaccepted:
                 docentes_inscritos.append(docente_info)
@@ -397,22 +398,25 @@ def obtener_capacitacion(capacitacion_id):
                         "docente_id": inscripcion.id_docente,
                         "correo": docente.correo,
                         "nombres": docente.nombres,
+                        "id_inscripcion": inscripcion.id_inscripcion,
                     }
                     if inscripcion.isaccepted:
                         docentes_taller_inscritos.append(docente_info)
                     else:
                         docentes_taller_pendientes.append(docente_info)
 
-                datos_talleres.append({
-                    "nombre": taller.nombre,
-                    "id_taller": taller.id_taller,
-                    "docentes_inscritos": docentes_taller_inscritos,
-                    "docentes_pendientes": docentes_taller_pendientes,
-                })
+                datos_talleres.append(
+                    {
+                        "nombre": taller.nombre,
+                        "id_taller": taller.id_taller,
+                        "docentes_inscritos": docentes_taller_inscritos,
+                        "docentes_pendientes": docentes_taller_pendientes,
+                    }
+                )
             datos_capacitacion["talleres"] = datos_talleres
         else:
-            datos_capacitacion["docentes_inscritos"]= docentes_inscritos
-            datos_capacitacion["docentes_pendientes"]= docentes_pendientes
+            datos_capacitacion["docentes_inscritos"] = docentes_inscritos
+            datos_capacitacion["docentes_pendientes"] = docentes_pendientes
 
         return (
             jsonify(
@@ -1273,7 +1277,12 @@ def actualizar_inscripcion(id_inscripcion):
 
         # Manejar los registros en Asistencia dependiendo del valor de isaccepted
         if nuevo_isaccepted:
-            nueva_acreditacion = Acreditacion(id_inscripcion=id_inscripcion,asistencia=False,aprobado=False,observacion="")
+            nueva_acreditacion = Acreditacion(
+                id_inscripcion=id_inscripcion,
+                asistencia=False,
+                aprobado=False,
+                observacion="",
+            )
             db.session.add(nueva_acreditacion)
             # Crear registros en Asistencia
             capacitacion = Capacitacion.query.get(inscripcion.id_capacitacion)
@@ -1323,67 +1332,213 @@ def docentes_disponibles(id_capacitacion):
         todos_los_docentes = Docente.query.all()
 
         # Obtener los ID de los docentes que tienen inscripción en la capacitación
-        docentes_inscritos_en_capacitacion = {inscripcion.id_docente for inscripcion in Inscripcion.query.filter_by(id_capacitacion=id_capacitacion)}
+        docentes_inscritos_en_capacitacion = {
+            inscripcion.id_docente
+            for inscripcion in Inscripcion.query.filter_by(
+                id_capacitacion=id_capacitacion
+            )
+        }
 
         # Filtrar los docentes que no están inscritos en la capacitación
-        docentes_disponibles = [docente for docente in todos_los_docentes if docente.uid_firebase not in docentes_inscritos_en_capacitacion]
-        
+        docentes_disponibles = [
+            docente
+            for docente in todos_los_docentes
+            if docente.uid_firebase not in docentes_inscritos_en_capacitacion
+        ]
+
         # Convertir a formato JSON
-        docentes_json = [{"id": docente.uid_firebase, "nombre": docente.nombres, "correo": docente.correo} for docente in docentes_disponibles]
+        docentes_json = [
+            {
+                "id": docente.uid_firebase,
+                "nombre": docente.nombres,
+                "correo": docente.correo,
+            }
+            for docente in docentes_disponibles
+        ]
 
         return jsonify({"estado": True, "respuesta": docentes_json, "error": ""}), 200
 
     except Exception as e:
         app.logger.error(f"Error al obtener docentes disponibles: {str(e)}")
-        return jsonify({"estado": False, "respuesta": "", "error": f"Error al obtener docentes disponibles: {str(e)}"}), 500
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener docentes disponibles: {str(e)}",
+                }
+            ),
+            500,
+        )
+
 
 @app.route("/agregar_inscripciones", methods=["POST"])
 def agregar_inscripciones():
     try:
         datos = request.get_json()
-        id_capacitacion = datos.get('id_capacitacion')
-        ids_docentes = datos.get('ids_docentes')  # Un array de IDs de docentes
-        id_taller = datos.get('id_taller')
+        id_capacitacion = datos.get("id_capacitacion")
+        ids_docentes = datos.get("ids_docentes")  # Un array de IDs de docentes
+        id_taller = datos.get("id_taller")
 
         if not id_capacitacion or not ids_docentes:
-            return jsonify({"estado": False, "respuesta": "", "error": "La capacitación y los docentes son campos obligatorios"}), 400
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "La capacitación y los docentes son campos obligatorios",
+                    }
+                ),
+                400,
+            )
 
         # Obtener la capacitación
         capacitacion = Capacitacion.query.get(id_capacitacion)
         if not capacitacion:
-            return jsonify({"estado": False, "respuesta": "", "error": "Capacitación no encontrada"}), 404
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Capacitación no encontrada",
+                    }
+                ),
+                404,
+            )
 
         # Validación para capacitaciones de tipo jornada
         if not id_taller and capacitacion.tipo == "jornada":
-            return jsonify({"estado": False, "respuesta": "", "error": "Se requiere un taller para inscripciones en capacitaciones de tipo jornada"}), 400
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Se requiere un taller para inscripciones en capacitaciones de tipo jornada",
+                    }
+                ),
+                400,
+            )
 
         if id_taller:
-            taller = Taller.query.filter_by(id_taller=id_taller, id_capacitacion=id_capacitacion).first()
+            taller = Taller.query.filter_by(
+                id_taller=id_taller, id_capacitacion=id_capacitacion
+            ).first()
             if not taller:
-                return jsonify({"estado": False, "respuesta": "", "error": "El taller proporcionado no pertenece a la capacitación indicada"}), 400
-
+                return (
+                    jsonify(
+                        {
+                            "estado": False,
+                            "respuesta": "",
+                            "error": "El taller proporcionado no pertenece a la capacitación indicada",
+                        }
+                    ),
+                    400,
+                )
 
         for id_docente in ids_docentes:
             # Verificar si ya existe una inscripción
-            inscripcion_existente = Inscripcion.query.filter_by(id_capacitacion=id_capacitacion, id_docente=id_docente).first()
+            inscripcion_existente = Inscripcion.query.filter_by(
+                id_capacitacion=id_capacitacion, id_docente=id_docente
+            ).first()
             if inscripcion_existente:
                 continue  # Saltar este docente si ya está inscrito
-            nueva_inscripcion = Inscripcion(id_capacitacion=id_capacitacion, id_taller=id_taller if id_taller else None, id_docente=id_docente, isaccepted=True)
+            nueva_inscripcion = Inscripcion(
+                id_capacitacion=id_capacitacion,
+                id_taller=id_taller if id_taller else None,
+                id_docente=id_docente,
+                isaccepted=True,
+            )
             db.session.add(nueva_inscripcion)
             db.session.commit()  # Hacer commit después de cada inscripción
 
             capacitacion = Capacitacion.query.get(id_capacitacion)
             if capacitacion:
-                nueva_acreditacion = Acreditacion(id_inscripcion=nueva_inscripcion.id_inscripcion,asistencia=False,aprobado=False,observacion="")
+                nueva_acreditacion = Acreditacion(
+                    id_inscripcion=nueva_inscripcion.id_inscripcion,
+                    asistencia=False,
+                    aprobado=False,
+                    observacion="",
+                )
                 db.session.add(nueva_acreditacion)
                 for fecha in capacitacion.fechas:
-                    nueva_asistencia = Asistencia(asiste_entrada=False, asiste_salida=False, fecha=fecha, id_inscripcion=nueva_inscripcion.id_inscripcion)
+                    nueva_asistencia = Asistencia(
+                        asiste_entrada=False,
+                        asiste_salida=False,
+                        fecha=fecha,
+                        id_inscripcion=nueva_inscripcion.id_inscripcion,
+                    )
                     db.session.add(nueva_asistencia)
                 db.session.commit()  # Hacer commit después de agregar asistencias
 
-        return jsonify({"estado": True, "respuesta": "Inscripciones y asistencias agregadas exitosamente", "error": ""}), 200
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Inscripciones y asistencias agregadas exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         app.logger.error(f"Error al agregar inscripciones: {str(e)}")
         db.session.rollback()  # Hacer rollback en caso de error
-        return jsonify({"estado": False, "respuesta": "", "error": f"Error al agregar inscripciones: {str(e)}"}), 500
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al agregar inscripciones: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/eliminar_inscripcion/<int:id_inscripcion>", methods=["DELETE"])
+# @jwt_required()
+def eliminar_inscripcion(id_inscripcion):
+    try:
+        # Obtener la capacitación existente
+        inscripcion = Inscripcion.query.get(id_inscripcion)
+
+        if not inscripcion:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Inscripcion no encontrada",
+                    }
+                ),
+                404,
+            )
+
+        # Eliminar la capacitación de la base de datos
+        db.session.delete(inscripcion)
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Inscripcion eliminada exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al eliminar inscripcion: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al eliminar inscripcion: {str(e)}",
+                }
+            ),
+            500,
+        )
