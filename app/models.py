@@ -51,8 +51,8 @@ class Inscripcion(db.Model):
     id_docente = db.Column(db.String(255), db.ForeignKey('docente.uid_firebase'))
     id_taller = db.Column(db.Integer, db.ForeignKey('taller.id_taller'))
     isaccepted = db.Column(db.Boolean)
-    asistencias = db.relationship('Asistencia', backref='inscripcion', lazy=True)
-    acreditacion = db.relationship('Acreditacion', backref='inscripcion', uselist=False, lazy=True)
+    asistencias = db.relationship('Asistencia', backref='inscripcion', lazy=True, cascade='all, delete-orphan')
+    acreditacion = db.relationship('Acreditacion', backref='inscripcion', uselist=False, lazy=True, cascade='all, delete-orphan')
 
 class TermsCompetenciaPedagogica(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)

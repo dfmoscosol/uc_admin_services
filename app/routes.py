@@ -959,31 +959,23 @@ def actualizar_isapproved(competencia, termino_id):
 
         # Actualizar la columna isapproved
         nuevo_estado = request.json.get("isapproved")
-        if nuevo_estado is not None:
-            termino.isapproved = nuevo_estado
-            db.session.commit()
+        nueva_palabra = request.json.get("palabra")
 
-            return (
-                jsonify(
-                    {
-                        "estado": True,
-                        "respuesta": "Estado del término actualizado exitosamente",
-                        "error": "",
-                    }
-                ),
-                200,
-            )
-        else:
-            return (
-                jsonify(
-                    {
-                        "estado": False,
-                        "respuesta": "",
-                        "error": "El parámetro 'isapproved' es requerido",
-                    }
-                ),
-                400,
-            )
+        termino.isapproved = nuevo_estado
+        termino.palabra = nueva_palabra
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Término actualizado exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+        
 
     except Exception as e:
         # Capturar errores y devolver un mensaje de error
@@ -1276,7 +1268,7 @@ def actualizar_inscripcion(id_inscripcion):
         db.session.commit()
 
         # Manejar los registros en Asistencia dependiendo del valor de isaccepted
-        if nuevo_isaccepted:
+        if nuevo_isaccepted and not inscripcion.isaccepted:
             nueva_acreditacion = Acreditacion(
                 id_inscripcion=id_inscripcion,
                 asistencia=False,
@@ -1294,9 +1286,10 @@ def actualizar_inscripcion(id_inscripcion):
                     id_inscripcion=id_inscripcion,
                 )
                 db.session.add(nueva_asistencia)
-        else:
+        elif inscripcion.isaccepted and not nuevo_isaccepted:
             # Eliminar registros en Asistencia
             Asistencia.query.filter_by(id_inscripcion=id_inscripcion).delete()
+            Acreditacion.query.filter_by(id_inscripcion=id_inscripcion).delete()
 
         db.session.commit()
 
@@ -1313,6 +1306,7 @@ def actualizar_inscripcion(id_inscripcion):
 
     except Exception as e:
         app.logger.error(f"Error al actualizar la inscripción: {str(e)}")
+        db.session.rollback()  # Hacer rollback en caso de error
         return (
             jsonify(
                 {
@@ -1494,6 +1488,7 @@ def agregar_inscripciones():
             ),
             500,
         )
+
 
 @app.route("/eliminar_inscripcion/<int:id_inscripcion>", methods=["DELETE"])
 # @jwt_required()
