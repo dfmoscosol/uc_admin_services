@@ -1,0 +1,120 @@
+t_talleres_ponentes = Table(
+    "talleres_ponentes",
+    metadata,
+    Column(
+        "taller_id",
+        ForeignKey("talleres.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False, 
+    ),
+    Column(
+        "ponente_id",
+        ForeignKey("ponentes.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+)
+
+t_microtalleres_ponentes = Table(
+    "microtalleres_ponentes",
+    metadata,
+    Column(
+        "microtaller_id",
+        ForeignKey("microtalleres.id"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("ponente_id", ForeignKey("ponentes.id"), primary_key=True, nullable=False),
+)
+
+class CharlasPonente(Base):
+    __tablename__ = "charlas_ponentes"
+
+    charla_id = Column(ForeignKey("charlas.id"), primary_key=True, nullable=False)
+    ponente_id = Column(ForeignKey("ponentes.id"), primary_key=True, nullable=False)
+    titulo_charla = Column(String)
+
+    charla = relationship("Charla", back_populates="charlas_ponentes")
+    ponente = relationship("Ponente", back_populates="charlas_ponentes")
+
+class Talleres(Base):
+    __tablename__ = "talleres"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('talleres_id_seq'::regclass)"),
+    )
+    evento_id = Column(ForeignKey("eventos.id"))
+    nombre = Column(String)
+    modalidad = Column(Integer)
+    ubicacion = Column(String)
+    hora_inicio = Column(Time)
+    duracion = Column(Integer)
+
+    evento = relationship("Evento", back_populates="talleres")
+
+    ponentes = relationship(
+        "Ponente",
+        back_populates="talleres",
+        secondary="talleres_ponentes"
+    )
+    
+class Microtalleres(Base):
+    __tablename__ = "microtalleres"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('microtalleres_id_seq'::regclass)"),
+    )
+    evento_id = Column(ForeignKey("eventos.id"))
+    hora_inicio = Column(Time)
+    duracion = Column(Integer)
+    modalidad = Column(String)
+    ubicacion = Column(String)
+
+    evento = relationship("Evento", back_populates="microtaller")
+    ponentes = relationship(
+        "Ponente", back_populates="microtalleres", secondary="microtalleres_ponentes"
+    )
+    
+class Charla(Base):
+    __tablename__ = "charlas"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('charlas_id_seq'::regclass)"),
+    )
+    evento_id = Column(ForeignKey("eventos.id"))
+    hora_inicio = Column(Time)
+    duracion = Column(Integer)
+    modalidad = Column(String)
+    ubicacion = Column(String)
+
+    evento = relationship("Evento", back_populates="charla")
+    charlas_ponentes = relationship("CharlasPonente", back_populates="charla")
+
+
+class Ponente(Base):
+    __tablename__ = "ponentes"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('ponentes_id_seq'::regclass)"),
+    )
+    nombre = Column(String)
+
+    talleres = relationship(
+        "Talleres",
+        back_populates="ponentes",
+        secondary="talleres_ponentes",
+        cascade="all, delete", single_parent=True)
+
+    microtalleres = relationship(
+        "Microtalleres", back_populates="ponentes", secondary="microtalleres_ponentes"
+    )
+    charlas_ponentes = relationship("CharlasPonente", back_populates="ponente")
+  

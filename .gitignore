@@ -3,3 +3,7 @@
 
 # Directorios de entorno virtual
 venv/
+
+/.vscode
+
+/__pychache__
