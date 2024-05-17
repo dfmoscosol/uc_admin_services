@@ -87,6 +87,7 @@ class Evento(Base):
     microtaller = relationship("Microtalleres", back_populates="evento", uselist=False)
     horariosdisponibles = relationship("HorarioDisponible", back_populates="evento")
     fechasevento = relationship("FechasEvento", back_populates="evento")
+    inscripciones = relationship('Inscripcion', back_populates='evento')
 
 
 class Periodo(Base):
@@ -284,6 +285,7 @@ class FechasEvento(Base):
     fecha = Column(Date)
 
     evento = relationship("Evento")
+    sesiones = relationship("SesionesTalleres", back_populates="fecha_evento")
 
 
 class HorarioDisponible(Base):
@@ -344,17 +346,33 @@ class Talleres(Base):
     )
     evento_id = Column(ForeignKey("eventos.id"))
     nombre = Column(String)
-    modalidad = Column(Integer)
-    ubicacion = Column(String)
-    hora_inicio = Column(Time)
-    duracion = Column(Integer)
-
+    
     evento = relationship("Evento", back_populates="talleres")
     talleres_ponentes = relationship(
         "TalleresPonente",
         back_populates="talleres",
     )
+    inscripciones = relationship('Inscripcion', back_populates='taller')
+    sesiones = relationship("SesionesTalleres", back_populates="taller", cascade="all, delete-orphan")
 
+class SesionesTalleres(Base):
+    __tablename__ = "sesiones_talleres"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('sesionestalleres_id_seq'::regclass)"),
+    )
+    taller_id = Column(ForeignKey("talleres.id"))
+    fecha_evento_id = Column(ForeignKey("fechas_evento.id"))
+    hora_inicio = Column(Time, nullable=False)
+    duracion = Column(Integer, nullable=False)
+    modalidad = Column(Integer, nullable=False)
+    ubicacion = Column(String, nullable=False)
+
+    taller = relationship("Talleres", back_populates="sesiones")
+    fecha_evento = relationship("FechasEvento")
+    
 
 class TalleresPonente(Base):
     __tablename__ = "talleres_ponentes"
@@ -426,8 +444,8 @@ class Inscripcion(Base):
     aceptada = Column(Boolean)
 
     docente = relationship("Docente")
-    evento = relationship("Evento")
-    taller = relationship("Talleres")
+    evento = relationship("Evento", back_populates='inscripciones')
+    taller = relationship('Talleres', back_populates='inscripciones')
 
 
 class EncuestaObservacion(Inscripcion):
