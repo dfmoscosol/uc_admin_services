@@ -20,16 +20,22 @@ from app.models import (
     HorarioDisponible,
     MicrotalleresPonente,
     Certificado,
-    Curso
+    Curso,
+    SesionesMicrotalleres,
+    Observadores,
+    Acreditacion,
+    EncuestaObservacion
 )
 from flask import jsonify, request, abort, send_file, jsonify, make_response
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager
 from flask_bcrypt import generate_password_hash, check_password_hash
 from flask import send_file
+from werkzeug.utils import secure_filename
 from sqlalchemy.orm import joinedload
 from datetime import datetime, time
 from io import BytesIO
 import pandas as pd
+
 
 modalidades = {
     1: "Presencial",
@@ -776,14 +782,10 @@ def crear_microtaller():
         datos_microtaller = request.json
         nombre = datos_microtaller.get("nombre")
         horas = datos_microtaller.get("horas")
-        fechas = datos_microtaller.get("fechas", [])
         inscripcion = datos_microtaller.get("inscripcion")
         cupos = datos_microtaller.get("cupos")
         ponentes = datos_microtaller.get("ponentes", [])
-        modalidad = datos_microtaller.get("modalidad")
-        ubicacion = datos_microtaller.get("ubicacion")
-        hora_inicio = datos_microtaller.get("hora_inicio")
-        duracion = datos_microtaller.get("duracion")
+        sesiones = datos_microtaller.get("sesiones", [])
 
         # Verificar la presencia de atributos obligatorios
         campos_faltantes = []
@@ -793,20 +795,12 @@ def crear_microtaller():
             campos_faltantes.append("horas")
         if inscripcion is None:
             campos_faltantes.append("inscripcion")
-        if not fechas:
-            campos_faltantes.append("fechas")
         if not cupos:
-            campos_faltantes.append("cupo")
+            campos_faltantes.append("cupos")
         if not ponentes:
             campos_faltantes.append("ponentes")
-        if not modalidad:
-            campos_faltantes.append("modalidad")
-        if not ubicacion:
-            campos_faltantes.append("ubicacion")
-        if not hora_inicio:
-            campos_faltantes.append("hora_inicio")
-        if not duracion:
-            campos_faltantes.append("duracion")
+        if not sesiones:
+            campos_faltantes.append("sesiones")
 
         if campos_faltantes:
             mensaje_error = f"Faltan los siguientes campos obligatorios: {', '.join(campos_faltantes)}"
@@ -833,31 +827,57 @@ def crear_microtaller():
         db.session.add(nuevo_evento)
         db.session.flush()  
 
+        # Crear registro en la tabla Microtalleres
         nuevo_microtaller = Microtalleres(
-            evento_id=nuevo_evento.id,
-            hora_inicio=hora_inicio,
-            duracion=duracion,
-            modalidad=modalidad,
-            ubicacion=ubicacion
+            evento_id=nuevo_evento.id
         )
         
         db.session.add(nuevo_microtaller)
         db.session.flush()
 
-        # Crear registros en la tabla FechasEvento
-        for fecha in fechas:
+        # Crear registros en la tabla FechasEvento y SesionesMicrotalleres
+        for sesion in sesiones:
+            fecha = sesion.get("fecha")
+            hora_inicio = sesion.get("hora_inicio")
+            duracion = sesion.get("duracion")
+            modalidad = sesion.get("modalidad")
+            ubicacion = sesion.get("ubicacion")
+
+            if not (fecha and hora_inicio and duracion and modalidad and ubicacion):
+                return (
+                    jsonify(
+                        {
+                            "estado": False,
+                            "respuesta": "",
+                            "error": "Cada sesión debe tener los atributos 'fecha', 'hora_inicio', 'duracion', 'modalidad' y 'ubicacion'.",
+                        }
+                    ),
+                    400,
+                )
+
+            # Crear registro en la tabla FechasEvento
             nueva_fecha_evento = FechasEvento(
                 evento_id=nuevo_evento.id,
                 fecha=fecha
             )
             db.session.add(nueva_fecha_evento)
+            db.session.flush()  # Obtener el ID de la nueva fecha
 
-        # Si es de tipo jornada, verificar y crear registros en la tabla Taller
+            # Crear registro en la tabla SesionesMicrotalleres
+            nueva_sesion = SesionesMicrotalleres(
+                microtaller_id=nuevo_microtaller.id,
+                fecha_evento_id=nueva_fecha_evento.id,
+                hora_inicio=hora_inicio,
+                duracion=duracion,
+                modalidad=modalidad,
+                ubicacion=ubicacion
+            )
+            db.session.add(nueva_sesion)
+
+        # Crear registros en la tabla MicrotalleresPonente
         for ponente in ponentes:
-            ponente_nombre = ponente.get("nombre")                
-            if (
-                not ponente_nombre
-            ):
+            ponente_nombre = ponente.get("nombre")
+            if not ponente_nombre:
                 return (
                     jsonify(
                         {
@@ -915,33 +935,56 @@ def actualizar_microtaller_parcial(evento_id):
                 setattr(evento, campo, datos_microtaller[campo])
 
         microtaller = db.session.query(Microtalleres).filter_by(evento_id=evento_id).one_or_none()
-        if microtaller:
-            for key in ['modalidad', 'ubicacion', 'hora_inicio', 'duracion']:
-                if key in datos_microtaller:
-                    setattr(microtaller, key, datos_microtaller[key])
+        if not microtaller:
+            return jsonify({"estado": False, "respuesta": "", "error": "Microtaller no encontrado"}), 404
 
-        if "fechas" in datos_microtaller:
-            db.session.query(FechasEvento).filter_by(evento_id=evento_id).delete()
-            for fecha in datos_microtaller['fechas']:
-                db.session.add(FechasEvento(evento_id=evento_id, fecha=fecha))
-
-        # Update or add ponentes without removing unmentioned ponentes
         if "ponentes" in datos_microtaller:
             db.session.query(MicrotalleresPonente).filter_by(microtaller_id=microtaller.id).delete(synchronize_session='fetch')
             for ponente_data in datos_microtaller['ponentes']:
-                nombre = ponente_data['nombre']
-                new_microtalleres_ponente = MicrotalleresPonente(
+                nombre = ponente_data.get('nombre')
+                if not nombre:
+                    return jsonify({"estado": False, "respuesta": "", "error": "Todos los ponentes deben tener el atributo 'nombre'."}), 400
+                nuevo_ponente = MicrotalleresPonente(
                     microtaller_id=microtaller.id,
                     nombre=nombre
                 )
-                db.session.add(new_microtalleres_ponente)
-                    
+                db.session.add(nuevo_ponente)
+
+        if "sesiones" in datos_microtaller:
+            # Borrar todas las fechas y sesiones anteriores del evento
+            db.session.query(SesionesMicrotalleres).filter_by(microtaller_id=microtaller.id).delete(synchronize_session='fetch')
+            db.session.query(FechasEvento).filter_by(evento_id=evento_id).delete(synchronize_session='fetch')
+            
+            for sesion in datos_microtaller['sesiones']:
+                fecha = sesion.get("fecha")
+                hora_inicio = sesion.get("hora_inicio")
+                duracion = sesion.get("duracion")
+                modalidad = sesion.get("modalidad")
+                ubicacion = sesion.get("ubicacion")
+                if not (fecha and hora_inicio and duracion and modalidad and ubicacion):
+                    return jsonify({"estado": False, "respuesta": "", "error": "Cada sesión debe tener los atributos 'fecha', 'hora_inicio', 'duracion', 'modalidad' y 'ubicacion'."}), 400
+                
+                nueva_fecha_evento = FechasEvento(evento_id=evento_id, fecha=fecha)
+                db.session.add(nueva_fecha_evento)
+                db.session.flush()
+                
+                nueva_sesion = SesionesMicrotalleres(
+                    microtaller_id=microtaller.id,
+                    fecha_evento_id=nueva_fecha_evento.id,
+                    hora_inicio=hora_inicio,
+                    duracion=duracion,
+                    modalidad=modalidad,
+                    ubicacion=ubicacion
+                )
+                db.session.add(nueva_sesion)
+
         db.session.commit()
-        return jsonify({"estado": True, "respuesta": "Charla actualizada exitosamente", "error": ""}), 200
+        return jsonify({"estado": True, "respuesta": "Microtaller actualizado exitosamente", "error": ""}), 200
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"estado": False, "respuesta": "", "error": str(e)}), 400
+        app.logger.error(f"Error al actualizar microtaller: {str(e)}")
+        return jsonify({"estado": False, "respuesta": "", "error": f"Error al actualizar microtaller: {str(e)}"}), 500
 
 ##OBSERVACIONES
 
@@ -970,8 +1013,8 @@ def crear_observacion():
             campos_faltantes.append("fechas")
         if not cupos:
             campos_faltantes.append("cupo")
-        if not horarios:
-            campos_faltantes.append("horarios")
+        """ if not horarios:
+            campos_faltantes.append("horarios") """
 
         if campos_faltantes:
             mensaje_error = f"Faltan los siguientes campos obligatorios: {', '.join(campos_faltantes)}"
@@ -1007,7 +1050,7 @@ def crear_observacion():
             db.session.add(nueva_fecha_evento)
 
         # Si es de tipo jornada, verificar y crear registros en la tabla Taller
-        for horario in horarios:
+        """ for horario in horarios:
             dia_semana = horario.get("dia_semana")
             hora_inicio = horario.get("hora_inicio")                
             hora_fin = horario.get("hora_fin")                
@@ -1033,7 +1076,7 @@ def crear_observacion():
                 hora_fin=hora_fin,
                 hora_inicio=hora_inicio                
             )
-            db.session.add(nuevo_horario)
+            db.session.add(nuevo_horario) """
             
         db.session.commit()
 
@@ -1095,11 +1138,220 @@ def actualizar_observacion_parcial(evento_id):
                 db.session.add(new_horario_disponible)
                     
         db.session.commit()
-        return jsonify({"estado": True, "respuesta": "Charla actualizada exitosamente", "error": ""}), 200
+        return jsonify({"estado": True, "respuesta": "Observación Áulica actualizada exitosamente", "error": ""}), 200
 
     except Exception as e:
         db.session.rollback()
         return jsonify({"estado": False, "respuesta": "", "error": str(e)}), 400
+
+@app.route("/observadores", methods=["POST"])
+# @jwt_required()
+def crear_observador():
+    try:
+        # Obtener datos del JSON de la solicitud
+        datos_observador = request.json
+        nombre = datos_observador.get("nombre")
+
+        # Verificar la presencia de atributos obligatorios
+        if not nombre:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El campo 'nombre' es obligatorio",
+                    }
+                ),
+                400,
+            )
+
+        # Crear registro en la tabla Observadores
+        nuevo_observador = Observadores(nombre=nombre)
+
+        db.session.add(nuevo_observador)
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Observador creado exitosamente",
+                    "error": "",
+                }
+            ),
+            201,
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al crear observador: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al crear observador: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/observadores/<int:id>", methods=["PUT"])
+# @jwt_required()
+def editar_observador(id):
+    try:
+        # Obtener datos del JSON de la solicitud
+        datos_observador = request.json
+        nombre = datos_observador.get("nombre")
+
+        # Verificar la presencia de atributos obligatorios
+        if not nombre:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El campo 'nombre' es obligatorio",
+                    }
+                ),
+                400,
+            )
+
+        # Buscar el observador por ID
+        observador = db.session.query(Observadores).get(id)
+        if not observador:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Observador no encontrado",
+                    }
+                ),
+                404,
+            )
+
+        # Actualizar los campos del observador
+        observador.nombre = nombre
+
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Observador actualizado exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al actualizar observador: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al actualizar observador: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/observadores/<int:id>", methods=["DELETE"])
+# @jwt_required()
+def eliminar_observador(id):
+    try:
+        # Buscar el observador por ID
+        observador = db.session.query(Observadores).get(id)
+        if not observador:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Observador no encontrado",
+                    }
+                ),
+                404,
+            )
+
+        # Validate if observer is referenced in EncuestaObservacion
+        encuesta_observacion = db.session.query(EncuestaObservacion).filter_by(observador_id=id).first()
+        if encuesta_observacion:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "No se puede eliminar el observador porque está asociado a una encuesta.",
+                    }
+                ),
+                400,
+            )
+        
+        # Eliminar el observador
+        db.session.delete(observador)
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": "Observador eliminado exitosamente",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al eliminar observador: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al eliminar observador: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/observadores", methods=["GET"])
+# @jwt_required()
+def obtener_observadores():
+    try:
+        # Obtener todos los observadores de la base de datos
+        observadores = db.session.query(Observadores).all()
+
+        # Convertir los observadores a una lista de diccionarios
+        resultado = [{"id": observador.id, "nombre": observador.nombre} for observador in observadores]
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": resultado,
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener observadores: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener observadores: {str(e)}",
+                }
+            ),
+            500,
+        )
 
 ##GENERAL
 
@@ -1198,10 +1450,18 @@ def obtener_eventos():
             elif evento.tipo == 3:  # Microtaller
                 microtaller = evento.microtaller
                 evento_info.update({
-                    "hora_inicio": microtaller.hora_inicio.strftime('%H:%M'),
-                    "duracion": microtaller.duracion,
-                    "modalidad": modalidades.get(microtaller.modalidad, 'Desconocida'),
-                    "ubicacion": microtaller.ubicacion,
+                    "sesiones": [
+                            {
+                                "fecha": sesion.fecha_evento.fecha.strftime('%Y-%m-%d'),
+                                "id": sesion.id,
+                                "fecha_id": sesion.fecha_evento.id,
+                                "hora_inicio": sesion.hora_inicio.strftime('%H:%M'),
+                                "duracion": sesion.duracion,
+                                "modalidad": modalidades.get(sesion.modalidad, 'Desconocida'),
+                                "ubicacion": sesion.ubicacion
+                            }
+                            for sesion in microtaller.sesiones  # Asegúrate de que taller.sesiones esté correctamente relacionado y cargado
+                        ],
                     "ponentes": [ponente.nombre for ponente in microtaller.microtalleres_ponentes],
                     "docentes_inscritos": [
                         {
@@ -1225,18 +1485,12 @@ def obtener_eventos():
 
             elif evento.tipo == 4:  # Observación Áulica
                 evento_info.update({
-                    "horarios" : [
-                        {
-                            "dia_semana": horario.dia_semana,
-                            "hora_inicio": horario.hora_inicio.strftime('%H:%M'),
-                            "hora_fin": horario.hora_fin.strftime('%H:%M')
-                        } for horario in evento.horariosdisponibles
-                    ],
+                    
                     "docentes_inscritos": [
                         {
                             "uid_firebase": inscripcion.docente.uid_firebase,
                             "nombre": inscripcion.docente.nombres,
-                            "correo": inscripcion.docente.correo
+                            "correo": inscripcion.docente.correo,
                         }
                         for inscripcion in evento.inscripciones
                         if inscripcion.aceptada == True
@@ -1381,10 +1635,18 @@ def obtener_evento_por_id(evento_id):
         elif evento.tipo == 3:  # Microtaller
             microtaller = evento.microtaller
             evento_info.update({
-                "hora_inicio": microtaller.hora_inicio.strftime('%H:%M'),
-                "duracion": microtaller.duracion,
-                "modalidad": modalidades.get(microtaller.modalidad, 'Desconocida'),
-                "ubicacion": microtaller.ubicacion,
+                "sesiones": [
+                        {
+                            "fecha": sesion.fecha_evento.fecha.strftime('%Y-%m-%d'),
+                            "id": sesion.id,
+                            "fecha_id": sesion.fecha_evento.id,
+                            "hora_inicio": sesion.hora_inicio.strftime('%H:%M'),
+                            "duracion": sesion.duracion,
+                            "modalidad": modalidades.get(sesion.modalidad, 'Desconocida'),
+                            "ubicacion": sesion.ubicacion
+                        }
+                        for sesion in microtaller.sesiones  # Asegúrate de que taller.sesiones esté correctamente relacionado y cargado
+                    ],
                 "ponentes": [ponente.nombre for ponente in microtaller.microtalleres_ponentes],
                 "docentes_inscritos": [
                     {
@@ -1410,19 +1672,14 @@ def obtener_evento_por_id(evento_id):
             })
         elif evento.tipo == 4:  # Observación Áulica
             evento_info.update({
-                "horarios" : [
-                    {
-                        "dia_semana": horario.dia_semana,
-                        "hora_inicio": horario.hora_inicio.strftime('%H:%M'),
-                        "hora_fin": horario.hora_fin.strftime('%H:%M')
-                    } for horario in evento.horariosdisponibles
-                ],
+                
                 "docentes_inscritos": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
                         "nombre": inscripcion.docente.nombres,
                         "correo": inscripcion.docente.correo,
-                        "id_inscripcion":inscripcion.id
+                        "id_inscripcion":inscripcion.id,
+                        "observador":inscripcion.encuesta.observador.nombre,
                     }
                     for inscripcion in evento.inscripciones
                     if inscripcion.aceptada == True
@@ -1432,7 +1689,28 @@ def obtener_evento_por_id(evento_id):
                         "uid_firebase": inscripcion.docente.uid_firebase,
                         "nombre": inscripcion.docente.nombres,
                         "correo": inscripcion.docente.correo,
-                            "id_inscripcion":inscripcion.id
+                        "id_inscripcion":inscripcion.id,
+                        "encuesta":{
+                            "anios_ejercicio":inscripcion.encuesta.anios_ejercicio,
+                            "numero_celular":inscripcion.encuesta.numero_celular,
+                            "facultad":inscripcion.encuesta.facultad.nombre,
+                            "carrera":inscripcion.encuesta.carrera.nombre,
+                            "asignatura":inscripcion.encuesta.asignatura,
+                            "ciclo_carrera":inscripcion.encuesta.ciclo_carrera,
+                            "inclusion":inscripcion.encuesta.inclusion,
+                            "campus":inscripcion.encuesta.campus,
+                            "duracion_clase":inscripcion.encuesta.duracion_clase,
+                            "numero_estudiantes":inscripcion.encuesta.numero_estudiantes,
+                            "comentarios":inscripcion.encuesta.comentarios,
+                            "horarios_disponibles":[
+                                {
+                                    "dia":horario.dia,
+                                    "hora_inicio":horario.hora_inicio.strftime('%H:%M'),
+                                    "hora_fin":horario.hora_fin.strftime('%H:%M')
+                                }
+                                for horario in inscripcion.encuesta.horarios
+                                ]
+                        }
                     }
                     for inscripcion in evento.inscripciones
                     if inscripcion.aceptada == False
@@ -1467,6 +1745,7 @@ def eliminar_evento(evento_id):
         fechas_evento_ids = db.session.query(FechasEvento.id).filter_by(evento_id=evento.id).all()
         fechas_evento_ids = [id for (id,) in fechas_evento_ids]
         db.session.query(SesionesTalleres).filter(SesionesTalleres.fecha_evento_id.in_(fechas_evento_ids)).delete()
+        db.session.query(SesionesMicrotalleres).filter(SesionesMicrotalleres.fecha_evento_id.in_(fechas_evento_ids)).delete()
         db.session.query(FechasEvento).filter_by(evento_id=evento.id).delete()
         db.session.query(Inscripcion).filter_by(evento_id=evento.id).delete()
 
@@ -1529,6 +1808,484 @@ def eliminar_evento(evento_id):
             ),
             500,
         )
+
+##INSCRIPCIONES
+
+@app.route("/eventos/inscripcion", methods=["POST"])
+def agregar_inscripciones():
+    try:
+        datos = request.get_json()
+        evento_id = datos.get("evento_id")
+        docentes_uid_firebase = datos.get("docentes_uid_firebase")  # Array de UIDs de Firebase
+        taller_id = datos.get("taller_id")
+        aceptada = datos.get("aceptada", True)  # default to True if not provided
+
+        if not evento_id or not docentes_uid_firebase:
+            return jsonify({"estado": False, "error": "Evento y docentes son campos obligatorios"}), 400
+
+        evento = db.session.query(Evento).get(evento_id)
+        if not evento:
+            return jsonify({"estado": False, "error": "Evento no encontrado"}), 404
+
+        if taller_id:
+            taller = db.session.query(Talleres).filter_by(id=taller_id, evento_id=evento_id).first()
+            if not taller:
+                return jsonify({"estado": False, "error": "Taller no válido o no pertenece al evento"}), 400
+
+        inscripciones_creadas = []
+        for uid_firebase in docentes_uid_firebase:
+            docente = db.session.query(Docente).filter_by(uid_firebase=uid_firebase).first()
+            if not docente:
+                continue  # Si no encuentra el docente, salta a la siguiente iteración
+
+            # Verificar si ya existe una inscripción
+            inscripcion_existente = db.session.query(Inscripcion).filter_by(
+                evento_id=evento_id, docente_uid_firebase=uid_firebase, taller_id=taller_id).first()
+            if inscripcion_existente:
+                continue  # Si ya está inscrito, salta a la siguiente iteración
+
+            nueva_inscripcion = Inscripcion(
+                evento_id=evento_id,
+                docente_uid_firebase=uid_firebase,
+                taller_id=taller_id,
+                aceptada=aceptada
+            )
+            db.session.add(nueva_inscripcion)
+            db.session.flush()
+            
+            nueva_acreditacion = Acreditacion(
+                inscripcion_id=nueva_inscripcion.id,
+                aprobo=False,  # Inicialmente no aprobado
+                asistio=False,  # Inicialmente no asistido
+                comentario=""  # Inicialmente sin comentarios
+            )
+            db.session.add(nueva_acreditacion)
+            
+            inscripciones_creadas.append(nueva_inscripcion.docente_uid_firebase)
+            
+
+        db.session.commit()
+
+        if not inscripciones_creadas:
+            return jsonify({"estado": False, "error": "Ninguna inscripción fue creada, posiblemente todos los docentes ya estaban inscritos o no encontrados"}), 400
+
+        return jsonify({"estado": True, "respuesta": f"Inscripciones creadas exitosamente para {len(inscripciones_creadas)} docentes."}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al crear las inscripciones: {str(e)}"}), 500
+    
+@app.route("/eventos/inscripcion/<int:id_inscripcion>", methods=["DELETE"])
+# @jwt_required()
+def eliminar_inscripcion(id_inscripcion):
+    try:
+        # Buscar la inscripción a eliminar
+        inscripcion = db.session.query(Inscripcion).get(id_inscripcion)
+        if not inscripcion:
+            return jsonify({"estado": False, "error": "Inscripción no encontrada"}), 404       
+        
+        encuesta = db.session.query(EncuestaObservacion).filter_by(inscripcion_id=id_inscripcion).first()
+        acreditaciones = db.session.query(Acreditacion).filter_by(inscripcion_id=id_inscripcion).all()
+
+        if encuesta:
+            # Eliminar la inscripción
+            if inscripcion.aceptada != False:
+                inscripcion.aceptada = False
+                encuesta.observador_id = None
+            else:
+                horarios = db.session.query(HorarioDisponible).filter_by(encuesta_id=encuesta.id).all()
+                for horario in horarios:
+                    db.session.delete(horario)
+                db.session.delete(encuesta)
+                db.session.delete(inscripcion)
+        else:
+            # Eliminar la inscripción
+            if inscripcion.aceptada != False:
+                inscripcion.aceptada = False
+            else:
+                db.session.delete(inscripcion)
+
+        # Eliminar las acreditaciones relacionadas
+        for acreditacion in acreditaciones:
+            db.session.delete(acreditacion)
+        
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Inscripción negada exitosamente"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al eliminar la inscripción: {str(e)}"}), 500
+
+@app.route("/eventos/inscripcion/estado/<int:id_inscripcion>", methods=["PATCH"])
+# @jwt_required()
+def actualizar_inscripcion(id_inscripcion):
+    try:
+        datos = request.get_json()
+        nuevo_estado = datos.get("aceptada")
+        observador_id = datos.get("observador_id")
+
+        # Validar que el nuevo estado esté presente y sea un booleano
+        if nuevo_estado is None or not isinstance(nuevo_estado, bool):
+            return jsonify({"estado": False, "error": "Es necesario especificar un estado válido ('aceptada': true o false)"}), 400
+
+        # Validar el observador_id si está presente
+        if observador_id is not None:
+            if not isinstance(observador_id, int) or observador_id <= 0:
+                return jsonify({"estado": False, "error": "El observador_id debe ser un entero positivo"}), 400
+
+            # Verificar si el observador existe
+            observador = db.session.query(Observadores).get(observador_id)
+            if not observador:
+                return jsonify({"estado": False, "error": "Observador no encontrado"}), 404
+
+        # Buscar la inscripción a actualizar
+        inscripcion = db.session.query(Inscripcion).get(id_inscripcion)
+        if not inscripcion:
+            return jsonify({"estado": False, "error": "Inscripción no encontrada"}), 404
+
+        # Buscar la encuesta observación a actualizar
+        encuesta_observacion = db.session.query(EncuestaObservacion).filter_by(inscripcion_id=id_inscripcion).first()
+        if observador_id is not None:
+            if not encuesta_observacion:
+                return jsonify({"estado": False, "error": "Encuesta observación no encontrada para la inscripción dada"}), 404
+            encuesta_observacion.observador_id = observador_id
+
+        # Actualizar el estado de 'aceptada'
+        inscripcion.aceptada = nuevo_estado
+
+        # Crear el registro de acreditación si la inscripción es aceptada
+        if nuevo_estado:
+            nueva_acreditacion = Acreditacion(
+                inscripcion_id=id_inscripcion,
+                aprobo=False,  # Inicialmente no aprobado
+                asistio=False,  # Inicialmente no asistido
+                comentario=""  # Inicialmente sin comentarios
+            )
+            db.session.add(nueva_acreditacion)
+
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Estado de inscripción actualizado exitosamente"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al actualizar el estado de la inscripción: {str(e)}"}), 500
+
+@app.route("/eventos/acreditaciones", methods=["POST"])
+# @jwt_required()
+def cargar_acreditacion():
+    try:
+        id_evento = request.form.get('id_evento')
+        id_taller = request.form.get('id_taller')  # Si es necesario
+
+        # Verificar si el archivo está en la solicitud
+        if 'file' not in request.files:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "No se encontró ningún archivo en la solicitud",
+                    }
+                ),
+                400,
+            )
+        
+        file = request.files['file']
+        
+        # Verificar si el archivo tiene un nombre seguro
+        if file.filename == '':
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El nombre del archivo no es válido",
+                    }
+                ),
+                400,
+            )
+
+        # Guardar el archivo en el servidor
+        filename = secure_filename(file.filename)
+        file_path = os.path.join('C:\\Users\\diego\\Documents', filename)
+        file.save(file_path)
+
+        # Leer el archivo con pandas
+        if file_path.endswith('.csv'):
+            data = pd.read_csv(file_path)
+        elif file_path.endswith('.xlsx'):
+            data = pd.read_excel(file_path)
+        else:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El formato del archivo no es soportado (Se admite .xlsx o .csv). ",
+                    }
+                ),
+                400,
+            )
+
+        # Verificar si las inscripciones existen basadas en el correo y id_evento/id_taller
+        inscripciones = {}
+        for correo in data['correo']:
+            inscripcion = db.session.query(Inscripcion).filter(
+                Inscripcion.docente.has(correo=correo),
+                Inscripcion.evento_id == id_evento,
+                (Inscripcion.taller_id == id_taller if id_taller else True)
+            ).first()
+            if inscripcion:
+                inscripciones[correo] = inscripcion.id
+            else:
+                return (
+                    jsonify(
+                        {
+                            "estado": False,
+                            "respuesta": "",
+                            "error": f"No se encontró una inscripción para el correo: {correo}",
+                        }
+                    ),
+                    400,
+                )
+
+        # Iterar sobre las filas del dataframe e insertar o actualizar los registros en la base de datos
+        actualizadas=0
+        nuevas=0
+        for index, row in data.iterrows():
+            inscripcion_id = inscripciones[row['correo']]
+            acreditacion = db.session.query(Acreditacion).filter_by(inscripcion_id=inscripcion_id).first()
+            
+            if acreditacion:
+                # Actualizar la acreditación existente
+                acreditacion.asistio = row['asistio']
+                acreditacion.aprobo = row['aprobo']
+                acreditacion.comentario = row['comentario']
+                actualizadas=actualizadas+1
+            else:
+                # Crear una nueva acreditación
+                nueva_acreditacion = Acreditacion(
+                    inscripcion_id=inscripcion_id,
+                    asistio=row['asistio'],
+                    aprobo=row['aprobo'],
+                    comentario=row['comentario']
+                )
+                db.session.add(nueva_acreditacion)
+                nuevas=nuevas+1
+        
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": f"Datos cargados exitosamente. Nuevos: {nuevas} Actualizados:{actualizadas}",
+                    "error": "",
+                }
+            ),
+            201,
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al cargar datos de acreditación: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al cargar datos de acreditación: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/eventos/acreditaciones/pdf/<int:id_acreditacion>", methods=["PATCH"])
+# @jwt_required()
+def guardar_pdf(id_acreditacion):
+    try:
+        if 'archivo_pdf' not in request.files:
+            return jsonify({"estado": False, "error": "Archivo PDF no encontrado en la solicitud"}), 400
+
+        archivo_pdf = request.files['archivo_pdf']
+        filename = secure_filename(archivo_pdf.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        archivo_pdf.save(filepath)
+
+        # Verificar si la acreditación existe
+        acreditacion = db.session.query(Acreditacion).get(id_acreditacion)
+        if not acreditacion:
+            return jsonify({"estado": False, "error": "Acreditación no encontrada"}), 404
+
+        # Guardar la ruta del archivo PDF en la acreditación
+        acreditacion.archivo_pdf = filepath
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Archivo PDF guardado exitosamente"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al guardar el archivo PDF: {str(e)}"}), 500
+
+@app.route("/eventos/acreditaciones/pdf/<int:id_acreditacion>", methods=["GET"])
+# @jwt_required()
+def descargar_pdf(id_acreditacion):
+    try:
+        # Verificar si la acreditación existe
+        acreditacion = db.session.query(Acreditacion).get(id_acreditacion)
+        if not acreditacion or not acreditacion.archivo_pdf:
+            return jsonify({"estado": False, "error": "Acreditación no encontrada o archivo PDF no disponible"}), 404
+
+        return send_file(acreditacion.archivo_pdf, as_attachment=True)
+
+    except Exception as e:
+        return jsonify({"estado": False, "error": f"Error al descargar el archivo PDF: {str(e)}"}), 500
+
+@app.route("/eventos/acreditaciones/pdf/<int:id_acreditacion>", methods=["DELETE"])
+# @jwt_required()
+def eliminar_pdf(id_acreditacion):
+    try:
+        # Verificar si la acreditación existe
+        acreditacion = db.session.query(Acreditacion).get(id_acreditacion)
+        if not acreditacion or not acreditacion.archivo_pdf:
+            return jsonify({"estado": False, "error": "Acreditación no encontrada o archivo PDF no disponible"}), 404
+
+        # Eliminar el archivo PDF del sistema de archivos
+        if os.path.exists(acreditacion.archivo_pdf):
+            os.remove(acreditacion.archivo_pdf)
+
+        # Eliminar la ruta del archivo PDF de la acreditación
+        acreditacion.archivo_pdf = None
+        db.session.commit()
+
+        return jsonify({"estado": True, "respuesta": "Archivo PDF eliminado exitosamente"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al eliminar el archivo PDF: {str(e)}"}), 500
+
+
+@app.route("/eventos/acreditaciones/<int:evento_id>", methods=["GET"])
+@app.route("/eventos/acreditaciones/<int:evento_id>/<int:taller_id>", methods=["GET"])
+# @jwt_required()
+def obtener_acreditaciones(evento_id, taller_id=None):
+    try:
+        # Filtrar inscripciones por evento_id y opcionalmente por taller_id
+        if taller_id:
+            inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id, taller_id=taller_id).all()
+        else:
+            inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id).all()
+
+        # Obtener acreditaciones asociadas a las inscripciones
+        acreditaciones = []
+        for inscripcion in inscripciones:
+            acreditacion = db.session.query(Acreditacion).filter_by(inscripcion_id=inscripcion.id).first()
+            if acreditacion:
+                docente = db.session.query(Docente).filter_by(uid_firebase=inscripcion.docente_uid_firebase).first()
+                if docente:
+                    acreditaciones.append({
+                        "id": acreditacion.id,
+                        "name": docente.nombres,
+                        "email": docente.correo,
+                        "attended": acreditacion.asistio,
+                        "passed": acreditacion.aprobo,
+                        "comments": acreditacion.comentario,
+                        "has_pdf": acreditacion.archivo_pdf is not None and acreditacion.archivo_pdf != ""
+                    })
+
+        return jsonify({"estado": True, "respuesta": acreditaciones}), 200
+
+    except Exception as e:
+        return jsonify({"estado": False, "error": f"Error al obtener las acreditaciones: {str(e)}"}), 500
+
+@app.route("/eventos/acreditaciones", methods=["PUT"])
+# @jwt_required()
+def actualizar_acreditaciones():
+    try:
+        datos = request.get_json()
+        for item in datos:
+            acreditacion = db.session.query(Acreditacion).get(item['id'])
+            if not acreditacion:
+                continue
+            acreditacion.asistio = item.get("attended", acreditacion.asistio)
+            acreditacion.aprobo = item.get("passed", acreditacion.aprobo)
+            acreditacion.comentario = item.get("comments", acreditacion.comentario)
+        db.session.commit()
+        return jsonify({"estado": True, "respuesta": "Acreditaciones actualizadas correctamente"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"estado": False, "error": f"Error al actualizar las acreditaciones: {str(e)}"}), 500
+
+@app.route("/eventos/<int:evento_id>/inscritos", defaults={'taller_id': None}, methods=["GET"])
+@app.route("/eventos/<int:evento_id>/inscritos/<int:taller_id>", methods=["GET"])
+# @jwt_required()
+def descargar_inscritos(evento_id, taller_id):
+    try:
+        # Obtener el evento
+        evento = db.session.query(Evento).filter_by(id=evento_id).one_or_none()
+        if not evento:
+            return jsonify({"estado": False, "respuesta": "", "error": "Evento no encontrado"}), 404
+
+        # Inicializar nombre del archivo con el nombre del evento
+        nombre_archivo = f'inscritos_evento_{evento.nombre.replace(" ", "_")}'
+
+        # Construir la consulta base
+        query = db.session.query(Inscripcion).join(Docente).filter(Inscripcion.evento_id == evento_id)
+
+        # Si hay taller_id, filtrar por él y obtener el nombre del taller
+        if taller_id:
+            taller = db.session.query(Talleres).filter_by(id=taller_id).one_or_none()
+            if not taller:
+                return jsonify({"estado": False, "respuesta": "", "error": "Taller no encontrado"}), 404
+            query = query.filter(Inscripcion.taller_id == taller_id)
+            nombre_archivo += f'_taller_{taller.nombre.replace(" ", "_")}'
+
+        inscritos = query.all()
+
+        # Crear lista de diccionarios con los datos necesarios
+        data = []
+        for inscrito in inscritos:
+            data.append({
+                "Evento ID": inscrito.evento_id,
+                "Taller ID": inscrito.taller_id,
+                "Inscripcion ID": inscrito.id,
+                "Docente UID Firebase": inscrito.docente_uid_firebase,
+                "Nombres": inscrito.docente.nombres,
+                "Correo": inscrito.docente.correo,
+                "Aceptada": inscrito.aceptada,
+            })
+
+        # Convertir a DataFrame de pandas
+        df = pd.DataFrame(data)
+
+        # Crear un archivo Excel en memoria
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Inscritos')
+
+        output.seek(0)
+
+        return send_file(
+            output,
+            download_name=f'{nombre_archivo}.xlsx',
+            as_attachment=True,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al generar el archivo Excel: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al generar el archivo Excel: {str(e)}",
+                }
+            ),
+            500,
+        )
+
 
 ##PENTAGONO
 
@@ -1935,175 +2692,6 @@ def docentes_disponibles(id_evento):
                     "estado": False,
                     "respuesta": "",
                     "error": f"Error al obtener docentes disponibles: {str(e)}",
-                }
-            ),
-            500,
-        )
-
-##INSCRIPCIONES
-
-@app.route("/eventos/inscripcion", methods=["POST"])
-def agregar_inscripciones():
-    try:
-        datos = request.get_json()
-        evento_id = datos.get("evento_id")
-        docentes_uid_firebase = datos.get("docentes_uid_firebase")  # Array de UIDs de Firebase
-        taller_id = datos.get("taller_id")
-        aceptada = datos.get("aceptada", True)  # default to True if not provided
-
-        if not evento_id or not docentes_uid_firebase:
-            return jsonify({"estado": False, "error": "Evento y docentes son campos obligatorios"}), 400
-
-        evento = db.session.query(Evento).get(evento_id)
-        if not evento:
-            return jsonify({"estado": False, "error": "Evento no encontrado"}), 404
-
-        if taller_id:
-            taller = db.session.query(Talleres).filter_by(id=taller_id, evento_id=evento_id).first()
-            if not taller:
-                return jsonify({"estado": False, "error": "Taller no válido o no pertenece al evento"}), 400
-
-        inscripciones_creadas = []
-        for uid_firebase in docentes_uid_firebase:
-            docente = db.session.query(Docente).filter_by(uid_firebase=uid_firebase).first()
-            if not docente:
-                continue  # Si no encuentra el docente, salta a la siguiente iteración
-
-            # Verificar si ya existe una inscripción
-            inscripcion_existente = db.session.query(Inscripcion).filter_by(
-                evento_id=evento_id, docente_uid_firebase=uid_firebase, taller_id=taller_id).first()
-            if inscripcion_existente:
-                continue  # Si ya está inscrito, salta a la siguiente iteración
-
-            nueva_inscripcion = Inscripcion(
-                evento_id=evento_id,
-                docente_uid_firebase=uid_firebase,
-                taller_id=taller_id,
-                aceptada=aceptada
-            )
-            db.session.add(nueva_inscripcion)
-            inscripciones_creadas.append(nueva_inscripcion.docente_uid_firebase)
-
-        db.session.commit()
-
-        if not inscripciones_creadas:
-            return jsonify({"estado": False, "error": "Ninguna inscripción fue creada, posiblemente todos los docentes ya estaban inscritos o no encontrados"}), 400
-
-        return jsonify({"estado": True, "respuesta": f"Inscripciones creadas exitosamente para {len(inscripciones_creadas)} docentes."}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"estado": False, "error": f"Error al crear las inscripciones: {str(e)}"}), 500
-    
-@app.route("/eventos/inscripcion/<int:id_inscripcion>", methods=["DELETE"])
-# @jwt_required()
-def eliminar_inscripcion(id_inscripcion):
-    try:
-        # Buscar la inscripción a eliminar
-        inscripcion = db.session.query(Inscripcion).get(id_inscripcion)
-        if not inscripcion:
-            return jsonify({"estado": False, "error": "Inscripción no encontrada"}), 404
-
-        # Eliminar la inscripción
-        db.session.delete(inscripcion)
-        db.session.commit()
-
-        return jsonify({"estado": True, "respuesta": "Inscripción eliminada exitosamente"}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"estado": False, "error": f"Error al eliminar la inscripción: {str(e)}"}), 500
-
-@app.route("/eventos/inscripcion/estado/<int:id_inscripcion>", methods=["PATCH"])
-# @jwt_required()
-def actualizar_inscripcion(id_inscripcion):
-    try:
-        datos = request.get_json()
-        nuevo_estado = datos.get("aceptada")
-
-        # Validar que el nuevo estado esté presente y sea un booleano
-        if nuevo_estado is None or not isinstance(nuevo_estado, bool):
-            return jsonify({"estado": False, "error": "Es necesario especificar un estado válido ('aceptada': true o false)"}), 400
-
-        # Buscar la inscripción a actualizar
-        inscripcion = db.session.query(Inscripcion).get(id_inscripcion)
-        if not inscripcion:
-            return jsonify({"estado": False, "error": "Inscripción no encontrada"}), 404
-
-        # Actualizar el estado de 'aceptada'
-        inscripcion.aceptada = nuevo_estado
-        db.session.commit()
-
-        return jsonify({"estado": True, "respuesta": "Estado de inscripción actualizado exitosamente"}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"estado": False, "error": f"Error al actualizar el estado de la inscripción: {str(e)}"}), 500
-    
-    
-@app.route("/eventos/<int:evento_id>/inscritos", defaults={'taller_id': None}, methods=["GET"])
-@app.route("/eventos/<int:evento_id>/inscritos/<int:taller_id>", methods=["GET"])
-def descargar_inscritos(evento_id, taller_id):
-    try:
-        # Obtener el evento
-        evento = db.session.query(Evento).filter_by(id=evento_id).one_or_none()
-        if not evento:
-            return jsonify({"estado": False, "respuesta": "", "error": "Evento no encontrado"}), 404
-
-        # Inicializar nombre del archivo con el nombre del evento
-        nombre_archivo = f'inscritos_evento_{evento.nombre.replace(" ", "_")}'
-
-        # Construir la consulta base
-        query = db.session.query(Inscripcion).join(Docente).filter(Inscripcion.evento_id == evento_id)
-
-        # Si hay taller_id, filtrar por él y obtener el nombre del taller
-        if taller_id:
-            taller = db.session.query(Talleres).filter_by(id=taller_id).one_or_none()
-            if not taller:
-                return jsonify({"estado": False, "respuesta": "", "error": "Taller no encontrado"}), 404
-            query = query.filter(Inscripcion.taller_id == taller_id)
-            nombre_archivo += f'_taller_{taller.nombre.replace(" ", "_")}'
-
-        inscritos = query.all()
-
-        # Crear lista de diccionarios con los datos necesarios
-        data = []
-        for inscrito in inscritos:
-            data.append({
-                "Evento ID": inscrito.evento_id,
-                "Taller ID": inscrito.taller_id,
-                "Inscripcion ID": inscrito.id,
-                "Docente UID Firebase": inscrito.docente_uid_firebase,
-                "Nombres": inscrito.docente.nombres,
-                "Correo": inscrito.docente.correo,
-                "Aceptada": inscrito.aceptada,
-            })
-
-        # Convertir a DataFrame de pandas
-        df = pd.DataFrame(data)
-
-        # Crear un archivo Excel en memoria
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Inscritos')
-
-        output.seek(0)
-
-        return send_file(
-            output,
-            download_name=f'{nombre_archivo}.xlsx',
-            as_attachment=True,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-    except Exception as e:
-        app.logger.error(f"Error al generar el archivo Excel: {str(e)}")
-        return (
-            jsonify(
-                {
-                    "estado": False,
-                    "respuesta": "",
-                    "error": f"Error al generar el archivo Excel: {str(e)}",
                 }
             ),
             500,

@@ -13,7 +13,7 @@ from sqlalchemy import (
     Date,
     Time,
     DateTime,
-    Text,
+    Text
 )
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy import (
@@ -85,7 +85,6 @@ class Evento(Base):
         "Talleres", back_populates="evento", cascade="all, delete-orphan"
     )
     microtaller = relationship("Microtalleres", back_populates="evento", uselist=False)
-    horariosdisponibles = relationship("HorarioDisponible", back_populates="evento")
     fechasevento = relationship("FechasEvento", back_populates="evento")
     inscripciones = relationship('Inscripcion', back_populates='evento')
 
@@ -247,18 +246,6 @@ class Charla(Base):
     evento = relationship("Evento", back_populates="charla")
     charlas_ponentes = relationship("CharlasPonente", back_populates="charla")
 
-
-class Docente(Base):
-    __tablename__ = "docente"
-
-    uid_firebase = Column(String(50), primary_key=True)
-    nombres = Column(String(100))
-    correo = Column(String(100))
-    id_universidad_fk = Column(ForeignKey("universidad.id_universidad"))
-
-    universidad = relationship("Universidad")
-
-
 class Facultad(Base):
     __tablename__ = "facultad"
 
@@ -291,17 +278,13 @@ class FechasEvento(Base):
 class HorarioDisponible(Base):
     __tablename__ = "horario_disponible"
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        server_default=text("nextval('horariodisponible_id_seq'::regclass)"),
-    )
-    evento_id = Column(ForeignKey("eventos.id"))
-    dia_semana = Column(String(10))
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    encuesta_id = Column(ForeignKey("encuesta_observacion.id"))
+    dia = Column(String(15))
     hora_inicio = Column(Time)
     hora_fin = Column(Time)
 
-    evento = relationship("Evento", back_populates="horariosdisponibles")
+    encuesta = relationship("EncuestaObservacion", back_populates="horarios")
 
 
 class Microtalleres(Base):
@@ -313,15 +296,30 @@ class Microtalleres(Base):
         server_default=text("nextval('microtalleres_id_seq'::regclass)"),
     )
     evento_id = Column(ForeignKey("eventos.id"))
-    hora_inicio = Column(Time)
-    duracion = Column(Integer)
-    modalidad = Column(String)
-    ubicacion = Column(String)
 
     evento = relationship("Evento", back_populates="microtaller")
     microtalleres_ponentes = relationship(
         "MicrotalleresPonente", back_populates="microtalleres"
     )
+    sesiones = relationship("SesionesMicrotalleres", back_populates="microtalleres")
+    
+class SesionesMicrotalleres(Base):
+    __tablename__ = "sesiones_microtalleres"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('sesiones_microtalleres_id_seq'::regclass)"),
+    )
+    microtaller_id = Column(ForeignKey("microtalleres.id"))
+    fecha_evento_id = Column(ForeignKey("fechas_evento.id"))
+    hora_inicio = Column(Time)
+    duracion = Column(Integer)
+    modalidad = Column(String)
+    ubicacion = Column(String)
+
+    microtalleres = relationship("Microtalleres", back_populates="sesiones")
+    fecha_evento = relationship("FechasEvento")
 
 
 class MicrotalleresPonente(Base):
@@ -334,7 +332,6 @@ class MicrotalleresPonente(Base):
     microtalleres = relationship(
         "Microtalleres", back_populates="microtalleres_ponentes"
     )
-
 
 class Talleres(Base):
     __tablename__ = "talleres"
@@ -383,7 +380,6 @@ class TalleresPonente(Base):
 
     talleres = relationship("Talleres", back_populates="talleres_ponentes")
 
-
 class Carrera(Base):
     __tablename__ = "carrera"
 
@@ -429,6 +425,17 @@ class CharlasPonente(Base):
 
     charla = relationship("Charla", back_populates="charlas_ponentes")
 
+class Docente(Base):
+    __tablename__ = "docente"
+
+    uid_firebase = Column(String(50), primary_key=True)
+    nombres = Column(String(100))
+    correo = Column(String(100))
+    id_universidad_fk = Column(ForeignKey("universidad.id_universidad"))
+
+    universidad = relationship("Universidad")
+    inscripciones = relationship('Inscripcion', back_populates='docente')
+    
 
 class Inscripcion(Base):
     __tablename__ = "inscripcion"
@@ -443,31 +450,11 @@ class Inscripcion(Base):
     taller_id = Column(ForeignKey("talleres.id"))
     aceptada = Column(Boolean)
 
-    docente = relationship("Docente")
-    evento = relationship("Evento", back_populates='inscripciones')
-    taller = relationship('Talleres', back_populates='inscripciones')
-
-
-class EncuestaObservacion(Inscripcion):
-    __tablename__ = "encuesta_observacion"
-
-    inscripcion_id = Column(ForeignKey("inscripcion.id"), primary_key=True)
-    anios_ejercicio = Column(Integer)
-    numero_celular = Column(String(15))
-    facultad_id = Column(ForeignKey("facultad.id_facultad"))
-    carrera_id = Column(ForeignKey("carrera.id_carrera"))
-    asignatura = Column(String(100))
-    ciclo_carrera = Column(Integer)
-    numero_estudiantes = Column(Integer)
-    inclusion = Column(Boolean)
-    campus = Column(String(100))
-    duracion_clase = Column(Integer)
-    comentarios = Column(Text)
-
-    carrera = relationship("Carrera")
-    facultad = relationship("Facultad")
-    horarios = relationship("HorarioDisponible", secondary="encuesta_horario")
-
+    docente = relationship("Docente", back_populates="inscripciones")
+    evento = relationship("Evento", back_populates="inscripciones")
+    taller = relationship("Talleres", back_populates="inscripciones")
+    encuesta = relationship("EncuestaObservacion", back_populates="inscripcion", uselist=False)
+    acreditacion = relationship("Acreditacion", back_populates="inscripcion", uselist=False)
 
 class Acreditacion(Base):
     __tablename__ = "acreditacion"
@@ -480,10 +467,46 @@ class Acreditacion(Base):
     inscripcion_id = Column(ForeignKey("inscripcion.id"), unique=True)
     asistio = Column(Boolean)
     aprobo = Column(Boolean)
+    archivo_pdf = Column(String)  # Almacena la ruta o URL del archivo PDF
     comentario = Column(Text)
 
-    inscripcion = relationship("Inscripcion", uselist=False)
+    inscripcion = relationship("Inscripcion", back_populates="acreditacion")
 
+class Observadores(Base):
+    __tablename__ = "observadores"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('observadores_id_seq'::regclass)"),
+    )
+    nombre = Column(String)
+    encuestas = relationship("EncuestaObservacion", back_populates="observador")
+
+
+class EncuestaObservacion(Base):
+    __tablename__ = "encuesta_observacion"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    inscripcion_id = Column(ForeignKey("inscripcion.id"))
+    anios_ejercicio = Column(Integer)
+    numero_celular = Column(String(15))
+    facultad_id = Column(ForeignKey("facultad.id_facultad"))
+    carrera_id = Column(ForeignKey("carrera.id_carrera"))
+    asignatura = Column(String(100))
+    ciclo_carrera = Column(Integer)
+    numero_estudiantes = Column(Integer)
+    inclusion = Column(Boolean)
+    campus = Column(String(100))
+    duracion_clase = Column(Integer)
+    comentarios = Column(Text)
+    observador_id = Column(ForeignKey("observadores.id"), nullable=True)
+
+    carrera = relationship("Carrera")
+    facultad = relationship("Facultad")
+    observador = relationship("Observadores", back_populates="encuestas")
+    horarios = relationship("HorarioDisponible", back_populates="encuesta")
+    inscripcion = relationship("Inscripcion", back_populates="encuesta")
 
 class Encuesta(Base):
     __tablename__ = "encuesta"
@@ -522,24 +545,6 @@ class InformeObservacionAulica(Base):
     fecha_carga = Column(DateTime)
 
     inscripcion = relationship("Inscripcion", uselist=False)
-
-
-t_encuesta_horario = Table(
-    "encuesta_horario",
-    metadata,
-    Column(
-        "encuesta_id",
-        ForeignKey("encuesta_observacion.inscripcion_id"),
-        primary_key=True,
-        nullable=False,
-    ),
-    Column(
-        "horario_id",
-        ForeignKey("horario_disponible.id"),
-        primary_key=True,
-        nullable=False,
-    ),
-)
 
 
 class Puntuacion(Base):
