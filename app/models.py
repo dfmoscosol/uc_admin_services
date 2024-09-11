@@ -242,6 +242,9 @@ class Charla(Base):
     duracion = Column(Integer)
     modalidad = Column(String)
     ubicacion = Column(String)
+    descripcion = Column(String)
+    competencia = Column(Integer)
+    momento = Column(Integer)
 
     evento = relationship("Evento", back_populates="charla")
     charlas_ponentes = relationship("CharlasPonente", back_populates="charla")
@@ -296,6 +299,9 @@ class Microtalleres(Base):
         server_default=text("nextval('microtalleres_id_seq'::regclass)"),
     )
     evento_id = Column(ForeignKey("eventos.id"))
+    descripcion = Column(String(250))
+    competencia = Column(Integer)
+    momento = Column(Integer)
 
     evento = relationship("Evento", back_populates="microtaller")
     microtalleres_ponentes = relationship(
@@ -343,7 +349,11 @@ class Talleres(Base):
     )
     evento_id = Column(ForeignKey("eventos.id"))
     nombre = Column(String)
-    
+    descripcion = Column(String)
+    competencia = Column(Integer)
+    momento = Column(Integer)
+    cupos_extra = Column(Integer)
+
     evento = relationship("Evento", back_populates="talleres")
     talleres_ponentes = relationship(
         "TalleresPonente",
@@ -431,10 +441,13 @@ class Docente(Base):
     uid_firebase = Column(String(50), primary_key=True)
     nombres = Column(String(100))
     correo = Column(String(100))
+    cedula = Column(String(100))
+    sexo = Column(String(100))
     id_universidad_fk = Column(ForeignKey("universidad.id_universidad"))
 
     universidad = relationship("Universidad")
     inscripciones = relationship('Inscripcion', back_populates='docente')
+
     
 
 class Inscripcion(Base):
@@ -483,7 +496,6 @@ class Observadores(Base):
     nombre = Column(String)
     encuestas = relationship("EncuestaObservacion", back_populates="observador")
 
-
 class EncuestaObservacion(Base):
     __tablename__ = "encuesta_observacion"
 
@@ -530,7 +542,6 @@ class Encuesta(Base):
     resultado = relationship("Resultado")
     docente = relationship("Docente")
 
-
 class InformeObservacionAulica(Base):
     __tablename__ = "informe_observacion_aulica"
 
@@ -545,7 +556,6 @@ class InformeObservacionAulica(Base):
     fecha_carga = Column(DateTime)
 
     inscripcion = relationship("Inscripcion", uselist=False)
-
 
 class Puntuacion(Base):
     __tablename__ = "puntuacion"
