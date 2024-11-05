@@ -13,7 +13,8 @@ from sqlalchemy import (
     Date,
     Time,
     DateTime,
-    Text
+    Text,
+    Numeric
 )
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy import (
@@ -74,12 +75,14 @@ class Evento(Base):
         primary_key=True,
         server_default=text("nextval('eventos_id_seq'::regclass)"),
     )
+    id_periodo = Column(ForeignKey("periodos_lectivos.id"))
     nombre = Column(String)
     tipo = Column(Integer)
     horas = Column(Integer)
     cupos = Column(Integer)
     inscripcion = Column(Boolean)
 
+    periodo = relationship("Periodo")
     charla = relationship("Charla", back_populates="evento", uselist=False)
     talleres = relationship(
         "Talleres", back_populates="evento", cascade="all, delete-orphan"
@@ -90,12 +93,12 @@ class Evento(Base):
 
 
 class Periodo(Base):
-    __tablename__ = "periodo"
+    __tablename__ = "periodos_lectivos"
 
-    id_periodo = Column(
+    id = Column(
         Integer,
         primary_key=True,
-        server_default=text("nextval('periodo_id_periodo_seq'::regclass)"),
+        server_default=text("nextval('periodo_id_seq'::regclass)"),
     )
     nombre = Column(String(50))
 
@@ -402,28 +405,38 @@ class Carrera(Base):
     id_facultad_fk = Column(ForeignKey("facultad.id_facultad"))
 
     facultad = relationship("Facultad")
-
-
+    
+    
 class Certificado(Base):
-    __tablename__ = "certificados"
+    __tablename__ = "certificados_externos"
 
-    id_certificado = Column(
+    id = Column(
         Integer,
         primary_key=True,
-        server_default=text("nextval('certificados_id_certificado_seq'::regclass)"),
+        server_default=text("nextval('certificados_id_seq'::regclass)")
     )
-    user_id = Column(ForeignKey("docente.uid_firebase"))
-    file_name = Column(Text)
-    path_to_file = Column(Text)
-    id_curso = Column(ForeignKey("cursos.id_curso"))
-    fecha_creacion = Column(DateTime(True), server_default=text("now()"))
-    isapproved = Column(Boolean)
-    horas = Column(Integer)
-    observacion = Column(String(255))
+    docente_uid_firebase = Column(ForeignKey("docente.uid_firebase"))
+    nombre_curso = Column(String(255))
+    archivo_pdf = Column(Text)
+    fecha_carga = Column(DateTime(True), server_default=text("now()"))
+    horas_certificado = Column(Integer)
+    horas_acredita = Column(Integer)
+    institucion = Column(String(255))
+    aceptada = Column(Boolean)
+    
+    docente = relationship("Docente", back_populates="certificados")
 
-    curso = relationship("Curso")
-    user = relationship("Docente")
+class Configuracion(Base):
+    __tablename__ = "configuracion"
 
+    id = Column(
+        Integer,
+        primary_key=True,
+        server_default=text("nextval('configuracion_id_seq'::regclass)")
+    )
+    nombre_parametro = Column(String(50), unique=True, nullable=False)
+    valor = Column(Numeric, nullable=False)
+    descripcion = Column(Text)
 
 class CharlasPonente(Base):
     __tablename__ = "charlas_ponentes"
@@ -440,6 +453,7 @@ class Docente(Base):
 
     uid_firebase = Column(String(50), primary_key=True)
     nombres = Column(String(100))
+    apellidos = Column(String(100))
     correo = Column(String(100))
     cedula = Column(String(100))
     sexo = Column(String(100))
@@ -447,6 +461,7 @@ class Docente(Base):
 
     universidad = relationship("Universidad")
     inscripciones = relationship('Inscripcion', back_populates='docente')
+    certificados = relationship('Certificado', back_populates='docente')
 
     
 
@@ -529,7 +544,7 @@ class Encuesta(Base):
         server_default=text("nextval('encuesta_id_encuesta_seq'::regclass)"),
     )
     id_resultado_fk = Column(ForeignKey("resultado.id_resultado"))
-    id_periodo_fk = Column(ForeignKey("periodo.id_periodo"))
+    id_periodo_fk = Column(ForeignKey("periodos_lectivos.id"))
     id_facultad_fk = Column(ForeignKey("facultad.id_facultad"))
     id_carrera_fk = Column(ForeignKey("carrera.id_carrera"))
     uid_firebase_fk = Column(ForeignKey("docente.uid_firebase"))
@@ -571,3 +586,11 @@ class Puntuacion(Base):
 
     encuesta = relationship("Encuesta")
     pregunta = relationship("Pregunta")
+
+class DistributivoDocente(Base):
+    __tablename__ = 'distributivo_docente'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    docente_uid_firebase = Column(ForeignKey("docente.uid_firebase"))
+    facultad_id = Column(ForeignKey("facultad.id_facultad"))
+    periodo_lectivo_id = Column(ForeignKey('periodo.id_periodo'))

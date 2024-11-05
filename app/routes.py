@@ -9,6 +9,7 @@ from app.models import (
     TermsCompetenciaTecnologica,
     TermsCompetenciaInvestigativa,
     TermsCompetenciaGestion,
+    Facultad,
     SesionesTalleres,
     FechasEvento,
     Charla,
@@ -20,11 +21,13 @@ from app.models import (
     HorarioDisponible,
     MicrotalleresPonente,
     Certificado,
-    Curso,
+    Configuracion,
     SesionesMicrotalleres,
     Observadores,
     Acreditacion,
-    EncuestaObservacion
+    EncuestaObservacion,
+    DistributivoDocente,
+    Periodo
 )
 from flask import jsonify, request, abort, send_file, jsonify, make_response
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager
@@ -35,27 +38,24 @@ from sqlalchemy.orm import joinedload
 from datetime import datetime, time
 from io import BytesIO
 import pandas as pd
+from sqlalchemy import func
+from .utils import send_email, modalidades, competencias, momentos
 
+@app.route('/some_route', methods=['GET'])
+def some_route():
+    # Lógica existente de la ruta
+    #data = request.json
 
-modalidades = {
-    1: "Presencial",
-    2: "Virtual",
-    3: "Híbrida"
-}
+    # Supongamos que necesitas enviar un correo después de algún proceso
+    subject = "Asunto del correo"
+    recipient = 'diego.moscosol@ucuenca.edu.ec'
+    body = "Este es el cuerpo del correo"
 
-competencias = {
-    1: "Tecnológica",
-    2: "Pedagógica",
-    3: "Comunicativa",
-    4: "De Gestión",
-    5: "Investigativa"
-}
+    # Llamar a la función de envío de correos
+    result = send_email(subject, recipient, body)
 
-momentos = {
-    1: "Explorador",
-    2: "Integrador",
-    3: "Innovador"
-}
+    # Devolver una respuesta, incluyendo el resultado del envío
+    return jsonify({'message': 'Operación completada', 'email_status': result})
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
@@ -1422,7 +1422,6 @@ def actualizar_certificado_evento(evento_id):
         return jsonify({"estado": False, "respuesta": "", "error": str(e)}), 400
 
 ##GENERAL
-
 @app.route("/eventos/todos", methods=["GET"])
 @jwt_required()
 def obtener_eventos():
@@ -1467,7 +1466,7 @@ def obtener_eventos():
                             "docentes_inscritos": [
                                 {
                                     "uid_firebase": inscripcion.docente.uid_firebase,
-                                    "nombre": inscripcion.docente.nombres,
+                                    "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                     "correo": inscripcion.docente.correo
                                 }
                                 for inscripcion in taller.inscripciones
@@ -1476,7 +1475,7 @@ def obtener_eventos():
                             "docentes_pendientes": [
                                 {
                                     "uid_firebase": inscripcion.docente.uid_firebase,
-                                    "nombre": inscripcion.docente.nombres,
+                                    "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                     "correo": inscripcion.docente.correo
                                 }
                                 for inscripcion in taller.inscripciones
@@ -1506,7 +1505,7 @@ def obtener_eventos():
                         "docentes_inscritos": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo
                             }
                             for inscripcion in evento.inscripciones
@@ -1515,7 +1514,7 @@ def obtener_eventos():
                         "docentes_pendientes": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo
                             }
                             for inscripcion in evento.inscripciones
@@ -1545,7 +1544,7 @@ def obtener_eventos():
                         "docentes_inscritos": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo
                             }
                             for inscripcion in evento.inscripciones
@@ -1554,7 +1553,7 @@ def obtener_eventos():
                         "docentes_pendientes": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo
                             }
                             for inscripcion in evento.inscripciones
@@ -1568,7 +1567,7 @@ def obtener_eventos():
                         "docentes_inscritos": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo,
                             }
                             for inscripcion in evento.inscripciones
@@ -1577,7 +1576,7 @@ def obtener_eventos():
                         "docentes_pendientes": [
                             {
                                 "uid_firebase": inscripcion.docente.uid_firebase,
-                                "nombre": inscripcion.docente.nombres,
+                                "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                                 "correo": inscripcion.docente.correo
                             }
                             for inscripcion in evento.inscripciones
@@ -1660,7 +1659,7 @@ def obtener_evento_por_id(evento_id):
                     "docentes_inscritos": [
                         {
                             "uid_firebase": inscripcion.docente.uid_firebase,
-                            "nombre": inscripcion.docente.nombres,
+                            "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                             "correo": inscripcion.docente.correo,
                             "id_inscripcion": inscripcion.id
                         }
@@ -1670,7 +1669,7 @@ def obtener_evento_por_id(evento_id):
                     "docentes_pendientes": [
                         {
                             "uid_firebase": inscripcion.docente.uid_firebase,
-                            "nombre": inscripcion.docente.nombres,
+                            "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                             "correo": inscripcion.docente.correo,
                             "id_inscripcion": inscripcion.id
                         }
@@ -1700,7 +1699,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_inscritos": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                         "id_inscripcion":inscripcion.id
                     }
@@ -1710,7 +1709,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_pendientes": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                             "id_inscripcion":inscripcion.id
                     }
@@ -1740,7 +1739,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_inscritos": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                         "id_inscripcion":inscripcion.id
 
@@ -1751,7 +1750,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_pendientes": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                             "id_inscripcion":inscripcion.id
                     }
@@ -1765,7 +1764,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_inscritos": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                         "id_inscripcion":inscripcion.id,
                         "observador":inscripcion.encuesta.observador.nombre,
@@ -1776,7 +1775,7 @@ def obtener_evento_por_id(evento_id):
                 "docentes_pendientes": [
                     {
                         "uid_firebase": inscripcion.docente.uid_firebase,
-                        "nombre": inscripcion.docente.nombres,
+                        "nombre": inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}",
                         "correo": inscripcion.docente.correo,
                         "id_inscripcion":inscripcion.id,
                         "encuesta":{
@@ -1942,7 +1941,7 @@ def agregar_inscripciones():
                 evento_id=evento_id,
                 docente_uid_firebase=uid_firebase,
                 taller_id=taller_id,
-                aceptada=aceptada
+                aceptada=True
             )
             db.session.add(nueva_inscripcion)
             db.session.flush()
@@ -2152,6 +2151,7 @@ def cargar_acreditacion():
             inscripcion = db.session.query(Inscripcion).filter(
                 Inscripcion.docente.has(correo=correo),
                 Inscripcion.evento_id == id_evento,
+                Inscripcion.aceptada == True,
                 (Inscripcion.taller_id == id_taller if id_taller else True)
             ).first()
             if inscripcion:
@@ -2279,11 +2279,8 @@ def obtener_acreditaciones(evento_id, taller_id=None):
         if taller_id:
             inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id, taller_id=taller_id).all()
         else:
-            if evento_id == 0:
-                inscripciones = db.session.query(Inscripcion).join(Inscripcion.evento).filter(Evento.tipo == 5).all()            
-            else:
-                inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id).all()
-
+            inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id).all()
+            
         # Obtener acreditaciones asociadas a las inscripciones
         acreditaciones = []
         for inscripcion in inscripciones:
@@ -2293,7 +2290,7 @@ def obtener_acreditaciones(evento_id, taller_id=None):
                 if docente:
                     acreditaciones.append({
                         "id": acreditacion.id,
-                        "name": docente.nombres,
+                        "name": docente.nombres if docente.apellidos is None else f"{docente.nombres} {docente.apellidos}",
                         "email": docente.correo,
                         "attended": acreditacion.asistio,
                         "passed": acreditacion.aprobo,
@@ -2347,19 +2344,33 @@ def descargar_inscritos(evento_id, taller_id):
             taller = db.session.query(Talleres).filter_by(id=taller_id).one_or_none()
             if not taller:
                 return jsonify({"estado": False, "respuesta": "", "error": "Taller no encontrado"}), 404
-            query = query.filter(Inscripcion.taller_id == taller_id)
+            query = query.filter(Inscripcion.taller_id == taller_id,Inscripcion.aceptada == True)
             nombre_archivo += f'_taller_{taller.nombre.replace(" ", "_")}'
 
         inscritos = query.all()
-
+        
+        #Ultimo periodo del que se tiene distributivo cargado en el sistema
+        max_id_periodo = (
+            db.session.query(func.max(Periodo.id))
+            .join(DistributivoDocente, Periodo.id == DistributivoDocente.periodo_lectivo_id)
+            .scalar()
+        )
+        
         # Crear lista de diccionarios con los datos necesarios
         data = []
         for inscrito in inscritos:
+            facultades = db.session.query(Facultad.nombre).join(DistributivoDocente, DistributivoDocente.facultad_id == Facultad.id_facultad)\
+            .filter(
+                DistributivoDocente.docente_uid_firebase == inscrito.docente_uid_firebase,
+                DistributivoDocente.periodo_lectivo_id == max_id_periodo
+            ).all()
             data.append({
                 "Nombres": inscrito.docente.nombres,
+                "Apellidos": "" if inscrito.docente.apellidos is None else inscrito.docente.apellidos,
                 "Correo": inscrito.docente.correo,
                 "Cedula": inscrito.docente.cedula,
                 "Sexo": inscrito.docente.sexo,
+                "Facultades": ' - '.join([facultad[0] for facultad in facultades])
             })
 
         # Convertir a DataFrame de pandas
@@ -2377,7 +2388,7 @@ def descargar_inscritos(evento_id, taller_id):
             download_name=f'{nombre_archivo}.xlsx',
             as_attachment=True,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
+        ) 
 
     except Exception as e:
         app.logger.error(f"Error al generar el archivo Excel: {str(e)}")
@@ -2390,8 +2401,8 @@ def descargar_inscritos(evento_id, taller_id):
                 }
             ),
             500,
-        )
-
+        ) 
+  
 @app.route("/eventos/docentes/<int:id_evento>", methods=["GET"])
 @jwt_required()
 def docentes_disponibles(id_evento):
@@ -2412,7 +2423,7 @@ def docentes_disponibles(id_evento):
         docentes_json = [
             {
                 "id": docente.uid_firebase,
-                "nombre": docente.nombres,
+                "nombre": docente.nombres if docente.apellidos is None else f"{docente.nombres} {docente.apellidos}",
                 "correo": docente.correo,
             }
             for docente in docentes_disponibles
@@ -2432,6 +2443,263 @@ def docentes_disponibles(id_evento):
             ),
             500,
         )
+
+##CERTIFICADOS
+@app.route("/certificados", methods=["GET"])
+@jwt_required()
+def obtener_certificados():
+    try:
+        # Realizar la consulta uniendo las tablas Certificado y Curso
+        certificados = (
+            db.session.query(Certificado).all()
+        )
+
+        # Construir la respuesta
+        datos_certificados = [
+            {
+                "id": certificado.id,
+                "docente_uid_firebase": certificado.docente_uid_firebase,
+                "archivo_pdf": certificado.archivo_pdf,
+                "fecha_creacion": certificado.fecha_carga.strftime("%Y-%m-%d") if certificado.fecha_carga else None,
+                "nombre_curso": certificado.nombre_curso,
+                "horas_acredita": certificado.horas_acredita,
+                "horas_certificado": certificado.horas_certificado,
+                "institucion": certificado.institucion,
+                "nombres": certificado.docente.nombres if certificado.docente.apellidos is None else f"{certificado.docente.nombres} {certificado.docente.apellidos}",
+                "correo": certificado.docente.correo,
+                "aceptada": certificado.aceptada
+            }
+            for certificado in certificados
+        ]
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"certificados": datos_certificados},
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener certificados: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener certificados: {str(e)}",
+                }
+            ),
+            500,
+        )
+        
+@app.route("/certificados/<int:certificado_id>", methods=["PUT"])
+@jwt_required()
+def actualizar_estado_certificado(certificado_id):
+    try:
+        # Obtener el JSON del cuerpo de la solicitud
+        data = request.get_json()
+        nuevo_estado = data.get("aceptada")
+
+        # Verificar que el nuevo estado fue proporcionado
+        if nuevo_estado is None:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "El campo 'aceptada' es requerido.",
+                    }
+                ),
+                400,
+            )
+
+        # Buscar el certificado por su ID
+        certificado = db.session.query(Certificado).filter(Certificado.id == certificado_id).first()
+
+
+        # Verificar si el certificado existe
+        if not certificado:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Certificado no encontrado.",
+                    }
+                ),
+                404,
+            )
+
+        # Actualizar el estado de aceptación del certificado
+        certificado.aceptada = nuevo_estado
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": f"Estado del certificado actualizado correctamente.",
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al actualizar estado del certificado: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al actualizar estado del certificado: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/descargar_certificado/<int:id_certificado>", methods=["GET"])
+@jwt_required()
+def descargar_certificado(id_certificado):
+    try:
+        certificado = db.session.query(Certificado).filter(Certificado.id == id_certificado).first()
+
+        if certificado:
+            path_to_file = certificado.archivo_pdf
+            print(path_to_file)
+            if os.path.exists(path_to_file):
+                return send_file(path_to_file, as_attachment=True)
+            else:
+                return (
+                    jsonify(
+                        {
+                            "estado": False,
+                            "respuesta": "",
+                            "error": "Archivo no encontrado",
+                        }
+                    ),
+                    404,
+                )
+        else:
+            return (
+                jsonify(
+                    {
+                        "estado": False,
+                        "respuesta": "",
+                        "error": "Certificado no encontrado",
+                    }
+                ),
+                404,
+            )
+
+    except Exception as e:
+        app.logger.error(f"Error al descargar el certificado: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al descargar el certificado: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/parametros", methods=["GET"])
+@jwt_required()
+def obtener_parametros():
+    try:
+        # Fetch all parameters from the configuracion table
+        parametros = db.session.query(Configuracion).all()
+
+        # Build the response
+        datos_parametros = [
+            {
+                "id": parametro.id,
+                "nombre_parametro": parametro.nombre_parametro,
+                "valor": float(parametro.valor),
+                "descripcion": parametro.descripcion,
+            }
+            for parametro in parametros
+        ]
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"parametros": datos_parametros},
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capture errors and return an error message
+        app.logger.error(f"Error al obtener parámetros: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener parámetros: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/parametros", methods=["PUT"])
+@jwt_required()
+def actualizar_parametros():
+    try:
+        # Get JSON data from the request
+        data = request.get_json()
+
+        # Extract the list of parameters to update
+        parametros = data.get('parametros', [])
+
+        for parametro in parametros:
+            nombre_parametro = parametro.get('nombre_parametro')
+            valor = parametro.get('valor')
+
+            # Fetch the parameter from the database
+            configuracion = db.session.query(Configuracion).filter_by(nombre_parametro=nombre_parametro).first()
+
+            if configuracion:
+                # Update the parameter's value
+                configuracion.valor = valor
+            else:
+                # Optionally, create a new parameter if it doesn't exist
+                new_parametro = Configuracion(
+                    nombre_parametro=nombre_parametro,
+                    valor=valor,
+                    descripcion=parametro.get('descripcion', '')
+                )
+                db.session.add(new_parametro)
+
+        # Commit the changes to the database
+        db.session.commit()
+
+        return jsonify({
+            "estado": True,
+            "respuesta": "Parámetros actualizados correctamente.",
+            "error": ""
+        }), 200
+
+    except Exception as e:
+        # Log the error and return an error message
+        app.logger.error(f"Error al actualizar parámetros: {str(e)}")
+        return jsonify({
+            "estado": False,
+            "respuesta": "",
+            "error": f"Error al actualizar parámetros: {str(e)}"
+        }), 500
 
 ##PENTAGONO
 """ 

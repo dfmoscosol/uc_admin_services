@@ -6,6 +6,7 @@ from flask_bcrypt import Bcrypt
 from datetime import timedelta
 from flask_cors import CORS
 
+
 app = Flask(__name__)
 CORS(
     app,
@@ -23,4 +24,4 @@ jwt = JWTManager(app)
 # Asegúrate de que `UPLOAD_FOLDER` esté configurado correctamente
 app.config['UPLOAD_FOLDER'] = r'/home/jpacheco/uc_admin_services/pdfs'
 
-from app import routes, models
+from app import routes, models 
