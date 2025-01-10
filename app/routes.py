@@ -4,11 +4,6 @@ from app.models import (
     Evento,
     Usuario,
     Talleres,
-    TermsCompetenciaPedagogica,
-    TermsCompetenciaComunicativa,
-    TermsCompetenciaTecnologica,
-    TermsCompetenciaInvestigativa,
-    TermsCompetenciaGestion,
     Facultad,
     SesionesTalleres,
     FechasEvento,
@@ -29,33 +24,18 @@ from app.models import (
     DistributivoDocente,
     Periodo
 )
-from flask import jsonify, request, abort, send_file, jsonify, make_response
+from flask import jsonify, request, send_file, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, JWTManager
-from flask_bcrypt import generate_password_hash, check_password_hash
 from flask import send_file
 from werkzeug.utils import secure_filename
-from sqlalchemy.orm import joinedload
 from datetime import datetime, time
 from io import BytesIO
 import pandas as pd
-from sqlalchemy import func
-from .utils import send_email, modalidades, competencias, momentos
+from .utils import send_email_async, modalidades, competencias, momentos, get_acceptance_email_content,get_updated_email_content, get_denial_email_content, get_inscription_email_content, get_approved_email_content, get_reproved_email_content, get_observation_email_content, get_accepted_certificate_email_content,get_denied_certificate_email_content,get_unasistance_alert_email_content, get_finish_alert_email_content
+from datetime import date
+from sqlalchemy import func, or_, and_
+from openpyxl import Workbook
 
-@app.route('/some_route', methods=['GET'])
-def some_route():
-    # Lógica existente de la ruta
-    #data = request.json
-
-    # Supongamos que necesitas enviar un correo después de algún proceso
-    subject = "Asunto del correo"
-    recipient = 'diego.moscosol@ucuenca.edu.ec'
-    body = "Este es el cuerpo del correo"
-
-    # Llamar a la función de envío de correos
-    result = send_email(subject, recipient, body)
-
-    # Devolver una respuesta, incluyendo el resultado del envío
-    return jsonify({'message': 'Operación completada', 'email_status': result})
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
@@ -317,7 +297,7 @@ def actualizar_jornada_parcial(evento_id):
                             ubicacion='Por definir'  # Valor predeterminado: 'Por definir'
                         )
                         db.session.add(nueva_sesion)
-
+        
         db.session.commit()
 
         return jsonify({"estado": True, "respuesta": "Jornada actualizada parcialmente con éxito", "error": ""}), 200
@@ -517,6 +497,33 @@ def actualizar_taller_parcial(evento_id, taller_id):
                 if 'ubicacion' in sesion:
                     sesionExistente.ubicacion = sesion['ubicacion']
                     
+            taller_info = {
+                "nombre":taller.evento.nombre,
+                "taller":taller.nombre,
+                "sesiones": [
+                    {
+                        "fecha": sesion.fecha_evento.fecha.strftime('%Y-%m-%d') if isinstance(sesion.fecha_evento.fecha, datetime) else sesion.fecha_evento.fecha,
+                        "hora_inicio": sesion.hora_inicio.strftime('%H:%M') if isinstance(sesion.hora_inicio, datetime) else sesion.hora_inicio,
+                        "duracion": sesion.duracion,
+                        "modalidad": modalidades.get(sesion.modalidad, 'Desconocida'),
+                        "ubicacion": sesion.ubicacion
+                    }
+                    for sesion in taller.sesiones
+                ],
+                "tipo": 1
+            }
+        
+            docentes_inscritos = [
+                inscripcion.docente.correo
+                for inscripcion in taller.inscripciones
+                if inscripcion.aceptada == True
+            ]
+
+            # Convertir la lista de correos en una cadena separada por comas para enviar a varios destinatarios
+            email_content = get_updated_email_content(taller_info)
+            # Enviar el correo
+            send_email_async(docentes_inscritos, "Cambios en el evento", email_content, "static/cabecera.png")
+                    
         # Actualizar ponentes si están presentes
         if 'ponentes' in datos_taller and datos_taller['ponentes']:
             # Eliminar y reemplazar todos los ponentes actuales
@@ -533,7 +540,7 @@ def actualizar_taller_parcial(evento_id, taller_id):
                     taller_id=taller_id
                 )
                 db.session.add(nuevo_ponente)
-
+        
         db.session.commit()
 
         return jsonify({
@@ -784,7 +791,30 @@ def actualizar_charla_parcial(evento_id):
                     titulo_charla=titulo_charla
                 )
                 db.session.add(new_charlas_ponente)
-                    
+        
+        
+        if all(field in datos_charla for field in ['hora_inicio', 'duracion', 'ubicacion', 'modalidad', 'fechas']):
+            charla_info = {
+                "nombre":charla.evento.nombre,
+                "fechas": [ {"fecha": fecha.fecha.strftime('%d-%m-%Y'), "id": fecha.id} for fecha in charla.evento.fechasevento],
+                "hora_inicio": charla.hora_inicio.strftime('%H:%M') if isinstance(charla.hora_inicio, datetime) else charla.hora_inicio,
+                "duracion": charla.duracion,
+                "modalidad": modalidades.get(charla.modalidad, 'Desconocida'),
+                "ubicacion": charla.ubicacion,
+                "tipo": 2
+            }
+            
+            docentes_inscritos = [
+                inscripcion.docente.correo
+                for inscripcion in charla.evento.inscripciones
+                if inscripcion.aceptada == True
+            ]
+
+            # Convertir la lista de correos en una cadena separada por comas para enviar a varios destinatarios
+            email_content = get_updated_email_content(charla_info)
+            # Enviar el correo
+            send_email_async(docentes_inscritos, "Cambios en el evento", email_content, "static/cabecera.png")
+        
         db.session.commit()
         return jsonify({"estado": True, "respuesta": "Charla actualizada exitosamente", "error": ""}), 200
 
@@ -1014,6 +1044,32 @@ def actualizar_microtaller_parcial(evento_id):
                 )
                 db.session.add(nueva_sesion)
 
+            microtaller_info = {
+                "nombre":microtaller.evento.nombre,
+                "sesiones": [
+                    {
+                        "fecha": sesion.fecha_evento.fecha.strftime('%Y-%m-%d') if isinstance(sesion.fecha_evento.fecha, datetime) else sesion.fecha_evento.fecha,
+                        "hora_inicio": sesion.hora_inicio.strftime('%H:%M') if isinstance(sesion.hora_inicio, datetime) else sesion.hora_inicio,
+                        "duracion": sesion.duracion,
+                        "modalidad": modalidades.get(sesion.modalidad, 'Desconocida'),
+                        "ubicacion": sesion.ubicacion
+                    }
+                    for sesion in microtaller.sesiones
+                ],
+                "tipo": 3
+            }
+            
+            docentes_inscritos = [
+                inscripcion.docente.correo
+                for inscripcion in microtaller.evento.inscripciones
+                if inscripcion.aceptada == True
+            ]
+
+            # Convertir la lista de correos en una cadena separada por comas para enviar a varios destinatarios
+            email_content = get_updated_email_content(microtaller_info)
+            # Enviar el correo
+            send_email_async(docentes_inscritos, "Cambios en el evento", email_content, "static/cabecera.png")
+        
         db.session.commit()
         return jsonify({"estado": True, "respuesta": "Microtaller actualizado exitosamente", "error": ""}), 200
 
@@ -1158,7 +1214,6 @@ def actualizar_observacion_parcial(evento_id):
             for fecha in datos_observacion['fechas']:
                 db.session.add(FechasEvento(evento_id=evento_id, fecha=fecha))
 
-        # Update or add ponentes without removing unmentioned ponentes
         if "horarios" in datos_observacion:
             db.session.query(HorarioDisponible).filter_by(evento_id=evento.id).delete(synchronize_session='fetch')
             for horario in datos_observacion['horarios']:
@@ -1388,38 +1443,6 @@ def obtener_observadores():
             ),
             500,
         )
-
-##CERTIFICADOS PROPIOS
-@app.route("/eventos/certificados/<int:evento_id>", methods=["PATCH"])
-@jwt_required()
-def actualizar_certificado_evento(evento_id):
-    try:
-        datos_certificado = request.json
-        evento = db.session.query(Evento).filter_by(id=evento_id).one_or_none()
-        if not evento:
-            return jsonify({"estado": False, "respuesta": "", "error": "Evento no encontrado"}), 404
-
-        if "horas" in datos_certificado:
-            evento.horas = datos_certificado["horas"]
-
-        inscripciones = db.session.query(Inscripcion).filter_by(evento_id=evento_id).all()
-
-        for inscripcion in inscripciones:
-            acreditacion = db.session.query(Acreditacion).filter_by(inscripcion_id=inscripcion.id).one_or_none()
-            if acreditacion:
-                if evento.horas > 0:
-                    acreditacion.aprobo = True
-                    acreditacion.asistio = True
-                else:
-                    acreditacion.aprobo = False
-                    acreditacion.asistio = False
-
-        db.session.commit()
-        return jsonify({"estado": True, "respuesta": "Certificado actualizado exitosamente", "error": ""}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"estado": False, "respuesta": "", "error": str(e)}), 400
 
 ##GENERAL
 @app.route("/eventos/todos", methods=["GET"])
@@ -1907,7 +1930,6 @@ def agregar_inscripciones():
         evento_id = datos.get("evento_id")
         docentes_uid_firebase = datos.get("docentes_uid_firebase")  # Array de UIDs de Firebase
         taller_id = datos.get("taller_id")
-        aceptada = datos.get("aceptada", False)  # default to True if not provided
 
         if not evento_id or not docentes_uid_firebase:
             return jsonify({"estado": False, "error": "Evento y docentes son campos obligatorios"}), 400
@@ -1956,13 +1978,24 @@ def agregar_inscripciones():
             
             inscripciones_creadas.append(nueva_inscripcion.docente_uid_firebase)
             
+            docente_nombre = nueva_inscripcion.docente.nombres if nueva_inscripcion.docente.apellidos is None else f"{nueva_inscripcion.docente.nombres} {nueva_inscripcion.docente.apellidos}"
+
+            # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+            if nueva_inscripcion.evento.tipo == 1:
+                email_content = get_inscription_email_content(docente_nombre, nueva_inscripcion.evento.nombre, nueva_inscripcion.evento.tipo, taller_nombre=nueva_inscripcion.taller.nombre)
+            else:
+                email_content = get_inscription_email_content(docente_nombre, nueva_inscripcion.evento.nombre, nueva_inscripcion.evento.tipo)
+
+            # Enviar el correo
+            send_email_async(nueva_inscripcion.docente.correo, "Inscripción Aceptada", email_content, "static/cabecera.png")
+            
         db.session.commit()
 
         
         if len(inscripciones_creadas) < len(docentes_uid_firebase):
             if not inscripciones_creadas:
                 return jsonify({"estado": False, "error": "Ninguna inscripción fue creada, todos los docentes ya estaban inscritos en el evento"}), 400
-            return jsonify({"estado": True, "respuesta": f"Inscripciones creadas exitosamente para {len(inscripciones_creadas)} docentes. Ya están inscritos en el evento {len(docentes_uid_firebase)-len(inscripciones_creadas)} docentes"}), 200
+            return jsonify({"estado": True, "respuesta": f"Inscripciones creadas exitosamente para {len(inscripciones_creadas)} docentes. Ya estaban inscritos en el evento {len(docentes_uid_firebase)-len(inscripciones_creadas)} docentes"}), 200
         else:
             return jsonify({"estado": True, "respuesta": f"Inscripciones creadas exitosamente para {len(inscripciones_creadas)} docentes."}), 200
 
@@ -1984,25 +2017,30 @@ def eliminar_inscripcion(id_inscripcion):
 
         if encuesta:
             # Eliminar la inscripción
-            if inscripcion.aceptada != False:
-                inscripcion.aceptada = False
-                encuesta.observador_id = None
-            else:
-                horarios = db.session.query(HorarioDisponible).filter_by(encuesta_id=encuesta.id).all()
-                for horario in horarios:
-                    db.session.delete(horario)
-                db.session.delete(encuesta)
-                db.session.delete(inscripcion)
+            horarios = db.session.query(HorarioDisponible).filter_by(encuesta_id=encuesta.id).all()
+            for horario in horarios:
+                db.session.delete(horario)
+            db.session.delete(encuesta)
+            db.session.delete(inscripcion)
+            # Obtener el nombre completo del docente
         else:
             # Eliminar la inscripción
-            if inscripcion.aceptada != False:
-                inscripcion.aceptada = False
-            else:
-                db.session.delete(inscripcion)
+            db.session.delete(inscripcion)
 
         # Eliminar las acreditaciones relacionadas
         for acreditacion in acreditaciones:
             db.session.delete(acreditacion)
+            
+        docente_nombre = inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}"
+
+        # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+        if inscripcion.evento.tipo == 1:
+            email_content = get_denial_email_content(docente_nombre, inscripcion.evento.nombre, inscripcion.evento.tipo, taller_nombre=inscripcion.taller.nombre)
+        else:
+            email_content = get_denial_email_content(docente_nombre, inscripcion.evento.nombre, inscripcion.evento.tipo)
+
+        # Enviar el correo
+        send_email_async(inscripcion.docente.correo, "Inscripción Anulada", email_content, "static/cabecera.png")
         
         db.session.commit()
 
@@ -2047,12 +2085,12 @@ def actualizar_inscripcion(id_inscripcion):
             
             if evento.tipo == 1:
                 
-                taller = db.session.query(Evento).get(inscripcion.taller_id)
+                taller = db.session.query(Talleres).get(inscripcion.taller_id)
                 if not taller:
                     return jsonify({"estado": False, "error": "Taller no encontrado"}), 404
 
                 inscripciones_aceptadas = db.session.query(Inscripcion).filter_by(evento_id=evento.id, taller_id=taller.id, aceptada=True).count()
-                if inscripciones_aceptadas >= evento.cupos:
+                if inscripciones_aceptadas >= evento.cupos + (taller.cupos_extra or 0):
                     return jsonify({"estado": False, "error": "No hay cupos disponibles para este evento"}), 400
             else:
                 inscripciones_aceptadas = db.session.query(Inscripcion).filter_by(evento_id=evento.id, aceptada=True).count()
@@ -2079,6 +2117,19 @@ def actualizar_inscripcion(id_inscripcion):
                 comentario=""  # Inicialmente sin comentarios
             )
             db.session.add(nueva_acreditacion)
+            
+            # Obtener el nombre completo del docente
+            docente_nombre = inscripcion.docente.nombres if inscripcion.docente.apellidos is None else f"{inscripcion.docente.nombres} {inscripcion.docente.apellidos}"
+
+            # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+            if evento.tipo == 1:
+                email_content = get_acceptance_email_content(docente_nombre, evento.nombre, evento.tipo, taller_nombre=inscripcion.taller.nombre)
+            else:
+                email_content = get_acceptance_email_content(docente_nombre, evento.nombre, evento.tipo)
+
+            # Enviar el correo
+            send_email_async(inscripcion.docente.correo, "Inscripción Aceptada", email_content, "static/cabecera.png")
+
 
         db.session.commit()
 
@@ -2125,7 +2176,7 @@ def cargar_acreditacion():
 
         # Guardar el archivo en el servidor
         filename = secure_filename(file.filename)
-        file_path = os.path.join('/home/jpacheco/uc_admin_services/acreditaciones/', filename)
+        file_path = os.path.join(app.config['UPLOAD_ACREDITACIONES'], filename)
         file.save(file_path)
 
         # Leer el archivo con pandas
@@ -2179,7 +2230,67 @@ def cargar_acreditacion():
             acreditacion.comentario = row['comentario']
             actualizadas=actualizadas+1
             
-        
+            docente_nombre = acreditacion.inscripcion.docente.nombres if acreditacion.inscripcion.docente.apellidos is None else f"{acreditacion.inscripcion.docente.nombres} {acreditacion.inscripcion.docente.apellidos}"
+            evento_nombre = acreditacion.inscripcion.evento.nombre
+            evento_tipo = acreditacion.inscripcion.evento.tipo
+            
+            if acreditacion.aprobo:
+                # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+                if acreditacion.inscripcion.evento.tipo == 1:
+                    email_content = get_approved_email_content(docente_nombre, evento_nombre, evento_tipo, taller_nombre=acreditacion.inscripcion.taller.nombre)
+                else:
+                    email_content = get_approved_email_content(docente_nombre, evento_nombre, evento_tipo)
+                    
+                # Enviar el correo
+                send_email_async(acreditacion.inscripcion.docente.correo, "Evento aprobado", email_content, "static/cabecera.png")
+                
+                horas_aprobadas = db.session.query(func.sum(Evento.horas)).join(Inscripcion).join(Acreditacion).filter(
+                    Inscripcion.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                    Acreditacion.aprobo == True
+                ).scalar()
+                
+                if horas_aprobadas >= 140:
+                    # Consulta principal para obtener las facultades del docente en el último periodo
+                    facultades = db.session.query(Facultad.nombre).join(DistributivoDocente).filter(
+                        DistributivoDocente.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                    ).distinct().all()
+
+                    # Formatea la lista de nombres de facultades
+                    nombres_facultades = ', '.join([facultad[0] for facultad in facultades])
+                    email_content = get_finish_alert_email_content(docente_nombre, acreditacion.inscripcion.docente.correo, nombres_facultades)
+                    # Enviar el correo
+                    send_email_async('capacitaciones.die@ucuenca.edu.ec', "Alerta Programa Finalizado", email_content, "static/cabecera.png")
+            else:
+                # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+                if acreditacion.inscripcion.evento.tipo == 1:
+                    email_content = get_reproved_email_content(docente_nombre, evento_nombre, evento_tipo, acreditacion.asistio, acreditacion.aprobo, taller_nombre=acreditacion.inscripcion.taller.nombre)
+                else:
+                    email_content = get_reproved_email_content(docente_nombre, evento_nombre, evento_tipo, acreditacion.asistio, acreditacion.aprobo)
+                    
+                # Enviar el correo
+                send_email_async(acreditacion.inscripcion.docente.correo, "Evento reprobado", email_content, "static/cabecera.png") 
+            
+            if not acreditacion.asistio:
+                fecha_min_subquery = db.session.query(
+                    FechasEvento.evento_id,
+                    func.min(FechasEvento.fecha).label('fecha')
+                ).group_by(FechasEvento.evento_id).subquery()
+
+                # Consulta principal usando la fecha mínima para cada evento
+                inasistencias_query = db.session.query(Evento.nombre).join(Inscripcion).join(Acreditacion).join(fecha_min_subquery, fecha_min_subquery.c.evento_id == Evento.id).filter(
+                    Inscripcion.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                    Acreditacion.asistio == False,
+                    fecha_min_subquery.c.fecha < date.today()  # Solo fechas anteriores a la fecha actual
+                ).distinct().all()
+                
+                nombres_eventos = [evento[0] for evento in inasistencias_query]
+                inasistencias = len(nombres_eventos)
+                
+                if inasistencias >= 3:
+                    email_content = get_unasistance_alert_email_content(docente_nombre, acreditacion.inscripcion.docente.correo, nombres_eventos)
+                    send_email_async('capacitaciones.die@ucuenca.edu.ec', "Alerta Inasistencia", email_content, "static/cabecera.png")
+                
+            
         db.session.commit()
 
         return (
@@ -2215,7 +2326,7 @@ def guardar_pdf(id_acreditacion):
 
         archivo_pdf = request.files['archivo_pdf']
         filename = secure_filename(archivo_pdf.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        filepath = os.path.join(app.config['UPLOAD_PDF'], filename)
         archivo_pdf.save(filepath)
 
         # Verificar si la acreditación existe
@@ -2225,6 +2336,12 @@ def guardar_pdf(id_acreditacion):
 
         # Guardar la ruta del archivo PDF en la acreditación
         acreditacion.archivo_pdf = filepath
+        acreditacion.asistio = True
+        acreditacion.aprobo = True
+        docente_nombre = acreditacion.inscripcion.docente.nombres if acreditacion.inscripcion.docente.apellidos is None else f"{acreditacion.inscripcion.docente.nombres} {acreditacion.inscripcion.docente.apellidos}"
+        evento_nombre = acreditacion.inscripcion.evento.nombre
+        email_content = get_observation_email_content(docente_nombre, evento_nombre)
+        send_email_async(acreditacion.inscripcion.docente.correo, "Acompañamiento Áulico Finalizado", email_content, "static/cabecera.png")
         db.session.commit()
 
         return jsonify({"estado": True, "respuesta": "Archivo PDF guardado exitosamente"}), 200
@@ -2262,6 +2379,8 @@ def eliminar_pdf(id_acreditacion):
 
         # Eliminar la ruta del archivo PDF de la acreditación
         acreditacion.archivo_pdf = None
+        acreditacion.asistio = False
+        acreditacion.aprobo = False
         db.session.commit()
 
         return jsonify({"estado": True, "respuesta": "Archivo PDF eliminado exitosamente"}), 200
@@ -2314,10 +2433,79 @@ def actualizar_acreditaciones():
             acreditacion = db.session.query(Acreditacion).get(item['id'])
             if not acreditacion:
                 continue
+            
+            cambio_aprobo = item.get("passed") is not None and item["passed"] != acreditacion.aprobo
+            cambio_asistio = item.get("attended") is not None and item["attended"] != acreditacion.asistio
+            
             acreditacion.asistio = item.get("attended", acreditacion.asistio)
             acreditacion.aprobo = item.get("passed", acreditacion.aprobo)
             acreditacion.comentario = item.get("comments", acreditacion.comentario)
+            
+            docente_nombre = acreditacion.inscripcion.docente.nombres if acreditacion.inscripcion.docente.apellidos is None else f"{acreditacion.inscripcion.docente.nombres} {acreditacion.inscripcion.docente.apellidos}"
+            evento_nombre = acreditacion.inscripcion.evento.nombre
+            evento_tipo = acreditacion.inscripcion.evento.tipo
+            
+            if cambio_aprobo:
+                if acreditacion.aprobo:
+                    # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+                    if acreditacion.inscripcion.evento.tipo == 1:
+                        email_content = get_approved_email_content(docente_nombre, evento_nombre, evento_tipo, taller_nombre=acreditacion.inscripcion.taller.nombre)
+                    else:
+                        email_content = get_approved_email_content(docente_nombre, evento_nombre, evento_tipo)
+                        
+                    # Enviar el correo
+                    send_email_async(acreditacion.inscripcion.docente.correo, "Evento aprobado", email_content, "static/cabecera.png")
+                    
+                    horas_aprobadas = db.session.query(func.sum(Evento.horas)).join(Inscripcion).join(Acreditacion).filter(
+                        Inscripcion.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                        Acreditacion.aprobo == True
+                    ).scalar()
+                    
+                    if horas_aprobadas >= 140:
+                        # Consulta principal para obtener las facultades del docente en el último periodo
+                        facultades = db.session.query(Facultad.nombre).join(DistributivoDocente).filter(
+                            DistributivoDocente.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                        ).distinct().all()
+
+                        # Formatea la lista de nombres de facultades
+                        nombres_facultades = ', '.join([facultad[0] for facultad in facultades])
+                        email_content = get_finish_alert_email_content(docente_nombre, acreditacion.inscripcion.docente.correo, nombres_facultades)
+                        # Enviar el correo
+                        send_email_async('capacitaciones.die@ucuenca.edu.ec', "Alerta Programa Finalizado", email_content, "static/cabecera.png")
+                    
+                else:
+                    # Llamar a la función con o sin `taller_nombre` según el tipo de evento
+                    if acreditacion.inscripcion.evento.tipo == 1:
+                        email_content = get_reproved_email_content(docente_nombre, evento_nombre, evento_tipo, acreditacion.asistio, acreditacion.aprobo, taller_nombre=acreditacion.inscripcion.taller.nombre)
+                    else:
+                        email_content = get_reproved_email_content(docente_nombre, evento_nombre, evento_tipo, acreditacion.asistio, acreditacion.aprobo)
+                        
+                    # Enviar el correo
+                    send_email_async(acreditacion.inscripcion.docente.correo, "Evento reprobado", email_content, "static/cabecera.png")
+            
+            if cambio_asistio:
+                if not acreditacion.asistio:
+                    fecha_min_subquery = db.session.query(
+                        FechasEvento.evento_id,
+                        func.min(FechasEvento.fecha).label('fecha')
+                    ).group_by(FechasEvento.evento_id).subquery()
+
+                    # Consulta principal usando la fecha mínima para cada evento
+                    inasistencias_query = db.session.query(Evento.nombre).join(Inscripcion).join(Acreditacion).join(fecha_min_subquery, fecha_min_subquery.c.evento_id == Evento.id).filter(
+                        Inscripcion.docente_uid_firebase == acreditacion.inscripcion.docente.uid_firebase,
+                        Acreditacion.asistio == False,
+                        fecha_min_subquery.c.fecha < date.today()  # Solo fechas anteriores a la fecha actual
+                    ).distinct().all()
+                    
+                    nombres_eventos = [evento[0] for evento in inasistencias_query]
+                    inasistencias = len(nombres_eventos)
+                    
+                    if inasistencias >= 3:
+                        email_content = get_unasistance_alert_email_content(docente_nombre, acreditacion.inscripcion.docente.correo, nombres_eventos)
+                        send_email_async('capacitaciones.die@ucuenca.edu.ec', "Alerta Inasistencia", email_content, "static/cabecera.png")
+            
         db.session.commit()
+        
         return jsonify({"estado": True, "respuesta": "Acreditaciones actualizadas correctamente"}), 200
     except Exception as e:
         db.session.rollback()
@@ -2537,6 +2725,36 @@ def actualizar_estado_certificado(certificado_id):
 
         # Actualizar el estado de aceptación del certificado
         certificado.aceptada = nuevo_estado
+        
+        docente_nombre = certificado.docente.nombres if certificado.docente.apellidos is None else f"{certificado.docente.nombres} {certificado.docente.apellidos}"
+        evento_nombre = certificado.nombre_curso
+        
+        # Obtiene la suma de horas acreditadas, o usa 0 si es None
+        total_horas_acredita = db.session.query(func.sum(Certificado.horas_acredita)).filter(
+            Certificado.docente_uid_firebase == certificado.docente_uid_firebase,
+            Certificado.aceptada == True
+        ).scalar() or 0
+
+        # Asegúrate de que porcentaje_programa y horas_programa no sean None
+        porcentaje_programa = db.session.query(Configuracion.valor).filter(
+            Configuracion.nombre_parametro == 'porcentaje_programa'
+        ).scalar() or 0
+
+        horas_programa = db.session.query(Configuracion.valor).filter(
+            Configuracion.nombre_parametro == 'horas_programa'
+        ).scalar() or 0
+
+        # Calcula las horas disponibles asegurando que todas las variables tienen un valor válido
+        horas_disponibles = (porcentaje_programa * horas_programa) - total_horas_acredita
+        
+        if nuevo_estado:
+            email_content = get_accepted_certificate_email_content(docente_nombre, evento_nombre, certificado.horas_acredita, int(horas_disponibles))
+            send_email_async(certificado.docente.correo, "Certificado Aprobado", email_content, "static/cabecera.png")
+        else:
+            email_content = get_denied_certificate_email_content(docente_nombre, evento_nombre)
+            send_email_async(certificado.docente.correo, "Certificado Denegado", email_content, "static/cabecera.png")
+        
+        
         db.session.commit()
 
         return (
@@ -2701,6 +2919,571 @@ def actualizar_parametros():
             "error": f"Error al actualizar parámetros: {str(e)}"
         }), 500
 
+
+##REPORTES
+@app.route("/reportes/horas", methods=["GET"])
+@jwt_required()
+def obtener_docentes_horas():
+    try:
+        # Parámetros de búsqueda y filtros
+        busqueda = request.args.get("busqueda", type=str)
+        facultad_nombre = request.args.get("facultad", type=str)
+        horas_min = request.args.get("horas_min", type=int)
+        horas_max = request.args.get("horas_max", type=int)
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 10, type=int)
+
+        # Subquery para obtener el último periodo lectivo de cada docente
+        ultimo_distributivo = (
+            db.session.query(
+                DistributivoDocente.docente_uid_firebase,
+                func.max(DistributivoDocente.periodo_lectivo_id).label("ultimo_periodo")
+            )
+            .group_by(DistributivoDocente.docente_uid_firebase)
+            .subquery()
+        )
+
+        certificados_subquery = (
+            db.session.query(
+                Certificado.docente_uid_firebase,
+                func.coalesce(func.sum(Certificado.horas_acredita), 0).label("horas_certificados")
+            )
+            .filter(Certificado.aceptada == True)
+            .group_by(Certificado.docente_uid_firebase)
+            .subquery()
+        )
+
+        # Subconsulta para horas acreditadas por eventos con acreditaciones aprobadas
+        eventos_subquery = (
+            db.session.query(
+                Inscripcion.docente_uid_firebase,
+                func.coalesce(func.sum(Evento.horas), 0).label("horas_eventos")
+            )
+            .join(Acreditacion, and_(
+                Inscripcion.id == Acreditacion.inscripcion_id,
+                Acreditacion.aprobo == True
+            ))
+            .join(Evento, Evento.id == Inscripcion.evento_id)
+            .group_by(Inscripcion.docente_uid_firebase)
+            .subquery()
+        )
+
+        # Consulta principal
+        query = db.session.query(
+            Docente.uid_firebase,
+            Docente.nombres,
+            Docente.apellidos,
+            Docente.correo,
+            Docente.cedula,
+            func.array_agg(func.distinct(Facultad.nombre)).label("facultades"),
+            func.coalesce(certificados_subquery.c.horas_certificados, 0).label("horas_certificados"),
+            func.coalesce(eventos_subquery.c.horas_eventos, 0).label("horas_eventos"),
+            (func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+            func.coalesce(eventos_subquery.c.horas_eventos, 0)).label("horas_totales")
+        ).join(
+            DistributivoDocente, Docente.uid_firebase == DistributivoDocente.docente_uid_firebase
+        ).join(
+            Facultad, DistributivoDocente.facultad_id == Facultad.id_facultad
+        ).outerjoin(
+            certificados_subquery, Docente.uid_firebase == certificados_subquery.c.docente_uid_firebase
+        ).outerjoin(
+            eventos_subquery, Docente.uid_firebase == eventos_subquery.c.docente_uid_firebase
+        ).filter(
+            DistributivoDocente.periodo_lectivo_id == ultimo_distributivo.c.ultimo_periodo
+        ).group_by(
+            Docente.uid_firebase, Docente.nombres, Docente.apellidos, Docente.correo, Docente.cedula,
+            certificados_subquery.c.horas_certificados, eventos_subquery.c.horas_eventos
+        )
+
+        # Aplicar filtros
+        if busqueda:
+            query = query.filter(
+                or_(
+                    Docente.nombres.ilike(f"%{busqueda}%"),
+                    Docente.apellidos.ilike(f"%{busqueda}%"),
+                    Docente.correo.ilike(f"%{busqueda}%"),
+                    Docente.cedula.ilike(f"%{busqueda}%")
+                )
+            )
+        # Filtro por facultad (si se proporciona)
+        if facultad_nombre:
+            query = query.having(
+                func.array_to_string(func.array_agg(func.distinct(Facultad.nombre)), ',').ilike(f"%{facultad_nombre}%")
+            )
+        # Filtros por rango de horas
+        if horas_min is not None:
+            query = query.having(
+                (func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+                func.coalesce(eventos_subquery.c.horas_eventos, 0)) >= horas_min
+            )
+        if horas_max is not None:
+            query = query.having(
+                (func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+                func.coalesce(eventos_subquery.c.horas_eventos, 0)) <= horas_max
+            )
+
+        # Aplicar paginación
+        paginacion = query.paginate(page=page, per_page=per_page, error_out=False)
+
+        # Construir la respuesta
+        resultado = []
+        for docente in paginacion.items:
+            resultado.append({
+                "docente": {
+                    "uid_firebase": docente.uid_firebase,
+                    "nombre": docente.nombres if docente.apellidos is None else f"{docente.nombres} {docente.apellidos}",
+                    "correo": docente.correo,                   
+                    "cedula": docente.cedula
+                },
+                "facultades": docente.facultades,
+                "horas_acreditadas": {
+                    "certificados": docente.horas_certificados,
+                    "eventos": docente.horas_eventos,
+                    "total": docente.horas_certificados + docente.horas_eventos
+                }
+            })
+
+        return jsonify({
+            "estado": True,
+            "respuesta": resultado,
+            "paginacion": {
+                "pagina_actual": paginacion.page,
+                "total_paginas": paginacion.pages,
+                "total_resultados": paginacion.total
+            },
+            "error": ""
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener docentes: {str(e)}")
+        return jsonify({
+            "estado": False,
+            "respuesta": "",
+            "error": f"Error al obtener docentes: {str(e)}"
+        }), 500
+
+@app.route("/facultades", methods=["GET"])
+@jwt_required()
+def obtener_facultades():
+    try:
+        # Consultar todas las facultades
+        facultades = db.session.query(Facultad).all()
+
+        # Construir la respuesta
+        datos_facultades = [
+            {
+                "id": facultad.id_facultad,
+                "nombre": facultad.nombre,
+            }
+            for facultad in facultades
+        ]
+
+        return (
+            jsonify(
+                {
+                    "estado": True,
+                    "respuesta": {"facultades": datos_facultades},
+                    "error": "",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener facultades: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "estado": False,
+                    "respuesta": "",
+                    "error": f"Error al obtener facultades: {str(e)}",
+                }
+            ),
+            500,
+        )
+
+@app.route("/reportes/horas/detalle", methods=["POST"])
+@jwt_required()
+def obtener_detalle_docente():
+    try:
+        # Obtener el UID del docente desde el cuerpo de la solicitud
+        data = request.get_json()
+        uid_firebase = data.get("uid_firebase")
+
+        if not uid_firebase:
+            return jsonify({
+                "estado": False,
+                "respuesta": "",
+                "error": "El UID de Firebase es obligatorio."
+            }), 400
+
+        # Consultar el docente
+        docente = db.session.query(Docente).filter_by(uid_firebase=uid_firebase).first()
+
+        if not docente:
+            return jsonify({
+                "estado": False,
+                "respuesta": "",
+                "error": "Docente no encontrado."
+            }), 404
+
+        # Consultar inscripciones y eventos acreditados
+        inscripciones = db.session.query(Inscripcion).filter_by(docente_uid_firebase=uid_firebase).all()
+
+        eventos = [
+            {
+                "nombre_evento": inscripcion.evento.nombre,
+                "horas_evento": inscripcion.evento.horas
+            }
+            for inscripcion in inscripciones if inscripcion.acreditacion and inscripcion.acreditacion.aprobo
+        ]
+
+        # Consultar certificados externos acreditados
+        certificados = db.session.query(Certificado).filter_by(docente_uid_firebase=uid_firebase, aceptada=True).all()
+        total_horas_certificados = sum(certificado.horas_acredita for certificado in certificados)
+
+        # Agregar evento "certificados_externos"
+        if total_horas_certificados > 0:
+            eventos.append({
+                "nombre_evento": "Certificados Externos",
+                "horas_evento": total_horas_certificados
+            })
+
+        return jsonify({
+            "estado": True,
+            "respuesta": {
+                "total_horas": sum(evento["horas_evento"] for evento in eventos),
+                "docente": {
+                    "uid_firebase": docente.uid_firebase,
+                    "nombre": docente.nombres if docente.apellidos is None else f"{docente.nombres} {docente.apellidos}",
+                    "correo": docente.correo
+                },
+                "eventos": eventos
+            },
+            "error": ""
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener detalle del docente: {str(e)}")
+        return jsonify({
+            "estado": False,
+            "respuesta": "",
+            "error": f"Error al obtener detalle del docente: {str(e)}"
+        }), 500
+        
+@app.route("/reportes/horas/excel", methods=["GET"])
+@jwt_required()
+def descargar_docentes_horas_excel_todo():
+    try:
+        # ======== Lógica de filtros y consulta (igual que en 'obtener_docentes_horas') ========
+        busqueda = request.args.get("busqueda", type=str)
+        facultad_nombre = request.args.get("facultad", type=str)
+        horas_min = request.args.get("horas_min", type=int)
+        horas_max = request.args.get("horas_max", type=int)
+        
+        # Subquery para obtener el último periodo lectivo de cada docente
+        ultimo_distributivo = (
+            db.session.query(
+                DistributivoDocente.docente_uid_firebase,
+                func.max(DistributivoDocente.periodo_lectivo_id).label("ultimo_periodo")
+            )
+            .group_by(DistributivoDocente.docente_uid_firebase)
+            .subquery()
+        )
+
+        certificados_subquery = (
+            db.session.query(
+                Certificado.docente_uid_firebase,
+                func.coalesce(func.sum(Certificado.horas_acredita), 0).label("horas_certificados")
+            )
+            .filter(Certificado.aceptada == True)
+            .group_by(Certificado.docente_uid_firebase)
+            .subquery()
+        )
+
+        # Subconsulta para horas acreditadas por eventos con acreditaciones aprobadas
+        eventos_subquery = (
+            db.session.query(
+                Inscripcion.docente_uid_firebase,
+                func.coalesce(func.sum(Evento.horas), 0).label("horas_eventos")
+            )
+            .join(Acreditacion, and_(
+                Inscripcion.id == Acreditacion.inscripcion_id,
+                Acreditacion.aprobo == True
+            ))
+            .join(Evento, Evento.id == Inscripcion.evento_id)
+            .group_by(Inscripcion.docente_uid_firebase)
+            .subquery()
+        )
+
+        # Consulta principal
+        query = db.session.query(
+            Docente.uid_firebase,
+            Docente.nombres,
+            Docente.apellidos,
+            Docente.correo,
+            Docente.cedula,
+            func.array_agg(func.distinct(Facultad.nombre)).label("facultades"),
+            func.coalesce(certificados_subquery.c.horas_certificados, 0).label("horas_certificados"),
+            func.coalesce(eventos_subquery.c.horas_eventos, 0).label("horas_eventos"),
+            (
+                func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+                func.coalesce(eventos_subquery.c.horas_eventos, 0)
+            ).label("horas_totales")
+        ).join(
+            DistributivoDocente, Docente.uid_firebase == DistributivoDocente.docente_uid_firebase
+        ).join(
+            Facultad, DistributivoDocente.facultad_id == Facultad.id_facultad
+        ).outerjoin(
+            certificados_subquery, Docente.uid_firebase == certificados_subquery.c.docente_uid_firebase
+        ).outerjoin(
+            eventos_subquery, Docente.uid_firebase == eventos_subquery.c.docente_uid_firebase
+        ).filter(
+            DistributivoDocente.periodo_lectivo_id == ultimo_distributivo.c.ultimo_periodo
+        ).group_by(
+            Docente.uid_firebase,
+            Docente.nombres,
+            Docente.apellidos,
+            Docente.correo,
+            Docente.cedula,
+            certificados_subquery.c.horas_certificados,
+            eventos_subquery.c.horas_eventos
+        )
+
+        # Aplicar filtros (búsqueda, facultad, horas_min, horas_max)
+        if busqueda:
+            query = query.filter(
+                or_(
+                    Docente.nombres.ilike(f"%{busqueda}%"),
+                    Docente.apellidos.ilike(f"%{busqueda}%"),
+                    Docente.correo.ilike(f"%{busqueda}%"),
+                    Docente.cedula.ilike(f"%{busqueda}%")
+                )
+            )
+        if facultad_nombre:
+            query = query.having(
+                func.array_to_string(func.array_agg(func.distinct(Facultad.nombre)), ',').ilike(f"%{facultad_nombre}%")
+            )
+        if horas_min is not None:
+            query = query.having(
+                (
+                    func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+                    func.coalesce(eventos_subquery.c.horas_eventos, 0)
+                ) >= horas_min
+            )
+        if horas_max is not None:
+            query = query.having(
+                (
+                    func.coalesce(certificados_subquery.c.horas_certificados, 0) + 
+                    func.coalesce(eventos_subquery.c.horas_eventos, 0)
+                ) <= horas_max
+            )
+
+        # ======== Obtenemos TODOS los resultados (sin paginación) ========
+        resultados = query.all()
+
+        # ======== Construimos el archivo Excel con openpyxl ========
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Docentes Horas"
+
+        # Encabezados
+        headers = [
+            "Nombres y Apellidos", 
+            "Correo",
+            "Cédula", 
+            "Facultades",
+            "Horas por Certificados",
+            "Horas por Eventos", 
+            "Horas Totales"
+        ]
+        ws.append(headers)
+
+        # Llenamos las filas con los datos
+        for docente in resultados:
+            facultades_str = ", ".join(docente.facultades) if docente.facultades else ""
+            nombre_completo = (
+                f"{docente.nombres} {docente.apellidos}"
+                if docente.apellidos
+                else docente.nombres
+            )
+            row_data = [
+                nombre_completo,
+                docente.correo,
+                docente.cedula,
+                facultades_str,
+                docente.horas_certificados,
+                docente.horas_eventos,
+                docente.horas_totales
+            ]
+            ws.append(row_data)
+
+        # (Opcional) Ajustar anchos de columna
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 35
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 50
+        ws.column_dimensions['E'].width = 20
+        ws.column_dimensions['F'].width = 20
+        ws.column_dimensions['G'].width = 20
+
+        # Guardar el archivo en un objeto BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        # ======== Retornar el Excel como adjunto ========
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="reporte_docentes_horas_completo.xlsx"
+        )
+
+    except Exception as e:
+        app.logger.error(f"Error al generar Excel: {str(e)}")
+        return jsonify({
+            "estado": False,
+            "respuesta": "",
+            "error": f"Error al generar Excel: {str(e)}"
+        }), 500
+
+@app.route("/reportes/eventos", methods=["GET"])
+#@jwt_required()
+def obtener_reporte_eventos():
+    try:
+        # Obtener parámetros de búsqueda y filtrado
+        nombre_evento = request.args.get("nombre", type=str)
+        tipo_evento = request.args.get("tipo", type=int)
+        competencia = request.args.get("competencia", type=str)
+        momento = request.args.get("momento", type=str)
+        fecha_inicio = request.args.get("fecha_inicio", type=str)
+        fecha_fin = request.args.get("fecha_fin", type=str)
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 10, type=int)
+
+        # Construcción de la consulta base
+        query = db.session.query(
+            Evento.id,
+            Evento.nombre,
+            Evento.tipo,
+            func.min(FechasEvento.fecha).label("primera_fecha"),
+            Charla.competencia.label("charla_competencia"),
+            Charla.momento.label("charla_momento"),
+            Microtalleres.competencia.label("microtaller_competencia"),
+            Microtalleres.momento.label("microtaller_momento")
+        ).outerjoin(FechasEvento, FechasEvento.evento_id == Evento.id
+        ).outerjoin(Charla, Charla.evento_id == Evento.id
+        ).outerjoin(Microtalleres, Microtalleres.evento_id == Evento.id
+        ).group_by(Evento.id, Charla.competencia, Charla.momento, Microtalleres.competencia, Microtalleres.momento)
+
+
+        # Aplicar filtros básicos
+        if nombre_evento:
+            query = query.filter(Evento.nombre.ilike(f"%{nombre_evento}%"))
+        if tipo_evento is not None:
+            query = query.filter(Evento.tipo == tipo_evento)
+        if fecha_inicio and fecha_fin:
+            query = query.filter(FechasEvento.fecha.between(fecha_inicio, fecha_fin))
+
+        # Obtener paginación
+        total_resultados = query.count()
+        eventos = query.limit(per_page).offset((page - 1) * per_page).all()
+        total_paginas = (total_resultados // per_page) + (1 if total_resultados % per_page > 0 else 0)
+
+        # Construcción de la respuesta
+        resultado_eventos = []
+
+        for evento in eventos:
+            if evento.tipo == 1:  # Jornada de Innovación - manejar talleres por separado
+                talleres_query = db.session.query(
+                    Talleres.id.label("id_taller"),
+                    Talleres.nombre.label("nombre_taller"),
+                    Talleres.competencia,
+                    Talleres.momento,
+                    func.count(Inscripcion.id).label("total_inscripciones"),
+                    func.count(Acreditacion.id).filter(Acreditacion.aprobo == True).label("inscritos_aprobados"),
+                    func.count(Acreditacion.id).filter(Acreditacion.aprobo == False).label("inscritos_no_aprobados")
+                ).outerjoin(Inscripcion, Inscripcion.taller_id == Talleres.id
+                ).outerjoin(Acreditacion, Acreditacion.inscripcion_id == Inscripcion.id
+                ).filter(Talleres.evento_id == evento.id
+                ).group_by(Talleres.id)
+
+                # Aplicar filtros de competencia y momento en talleres
+                if competencia:
+                    talleres_query = talleres_query.filter(Talleres.competencia == competencia)
+                if momento:
+                    talleres_query = talleres_query.filter(Talleres.momento == momento)
+
+                talleres = talleres_query.all()
+
+                for taller in talleres:
+                    resultado_eventos.append({
+                        "id": evento.id,
+                        "id_taller": taller.id_taller,
+                        "nombre": f"{evento.nombre} - {taller.nombre_taller}",
+                        "tipo": evento.tipo,
+                        "primera_fecha": evento.primera_fecha.strftime("%Y-%m-%d") if evento.primera_fecha else None,
+                        "competencia": taller.competencia if taller.competencia else "No aplica",
+                        "momento": taller.momento if taller.momento else "No aplica",
+                        "total_inscripciones": taller.total_inscripciones,
+                        "inscritos_aprobados": taller.inscritos_aprobados if taller.inscritos_aprobados else 0,
+                        "inscritos_no_aprobados": taller.inscritos_no_aprobados if taller.inscritos_no_aprobados else 0
+                    })
+            else:
+                # Obtener datos generales del evento
+                inscripcion_data = db.session.query(
+                    func.count(Inscripcion.id).label("total_inscripciones"),
+                    func.count(Acreditacion.id).filter(Acreditacion.aprobo == True).label("inscritos_aprobados"),
+                    func.count(Acreditacion.id).filter(Acreditacion.aprobo == False).label("inscritos_no_aprobados")
+                ).outerjoin(Acreditacion, Acreditacion.inscripcion_id == Inscripcion.id
+                ).filter(Inscripcion.evento_id == evento.id
+                ).group_by(Inscripcion.evento_id).first()
+
+                evento_data = {
+                    "id": evento.id,
+                    "nombre": evento.nombre,
+                    "tipo": evento.tipo,
+                    "primera_fecha": evento.primera_fecha.strftime("%Y-%m-%d") if evento.primera_fecha else None,
+                    "total_inscripciones": inscripcion_data.total_inscripciones if inscripcion_data else 0,
+                    "inscritos_aprobados": inscripcion_data.inscritos_aprobados if inscripcion_data else 0,
+                    "inscritos_no_aprobados": inscripcion_data.inscritos_no_aprobados if inscripcion_data else 0,
+                    "competencia": (
+                        evento.charla_competencia if evento.tipo == 2 else
+                        evento.microtaller_competencia if evento.tipo == 3 else
+                        "No aplica"
+                    ),
+                    "momento": (
+                        evento.charla_momento if evento.tipo == 2 else
+                        evento.microtaller_momento if evento.tipo == 3 else
+                        "No aplica"
+                    )
+                }
+
+                resultado_eventos.append(evento_data)
+
+        return jsonify({
+            "estado": True,
+            "respuesta": resultado_eventos,
+            "paginacion": {
+                "pagina_actual": page,
+                "total_paginas": total_paginas,
+                "total_resultados": total_resultados,
+                "por_pagina": per_page
+            },
+            "error": ""
+        }), 200
+
+    except Exception as e:
+        # Capturar errores y devolver un mensaje de error
+        app.logger.error(f"Error al obtener eventos: {str(e)}")
+        return jsonify({
+            "estado": False,
+            "respuesta": "",
+            "error": f"Error al obtener eventos: {str(e)}"
+        }), 500
+        
 ##PENTAGONO
 """ 
 @app.route("/terminos/<competencia>", methods=["GET"])
